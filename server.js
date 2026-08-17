@@ -484,15 +484,12 @@ app.get(
         }
     ),
     (req, res) => {
+req.session.userId =
+    req.user.id;
 
-        req.session.userId =
-            req.user.id;
+res.redirect('/');
 
-        res.redirect(
-            '/my-websites'
-        );
-
-    }
+}
 );
 
 // ============================================================
