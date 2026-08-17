@@ -1,1323 +1,293 @@
-require('dotenv').config();
-
 const express = require('express');
-const { Pool } = require('pg');
 const session = require('express-session');
-const bcrypt = require('bcrypt');
-const crypto = require('crypto');
-const cors = require('cors');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const bcrypt = require('bcryptjs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Render deployment reverse proxy trust configuration for secure cookies
+app.set('trust proxy', 1);
+
+// Security check for session secret in production
+if (!process.env.SESSION_SECRET) {
+    console.error('CRITICAL ERROR: SESSION_SECRET environment variable is missing.');
+    process.exit(1);
+}
+
+// Helmet security headers configured safely for single-file frontend integration
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+}));
 
 app.use(express.json());
-app.set('trust proxy', 1);
-app.use(cors({ origin: true, credentials: true }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname)));
 
-// ============================================================
-// SESSION
-// ============================================================
-
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'dev_fallback_secret_web4u_2026',
+const sessionMiddleware = session({
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
         secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
         sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
     }
-}));
+});
 
+app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ============================================================
-// DATABASE
-// ============================================================
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
+// Rate limiter specifically for admin login to prevent brute force attacks (5 requests per 15 minutes)
+const adminLoginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many login attempts. Please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 
-// ============================================================
-// GOOGLE OAUTH
-// ============================================================
-
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret',
-    callbackURL:
-        process.env.GOOGLE_CALLBACK_URL ||
-        'http://localhost:3000/api/auth/google/callback'
-}, async (accessToken, refreshToken, profile, done) => {
-
-    try {
-        const email =
-            profile.emails && profile.emails[0]
-                ? profile.emails[0].value
-                : null;
-
-        const name = profile.displayName || 'Google User';
-
-        if (!email) {
-            return done(
-                new Error('No email found from Google Profile')
-            );
-        }
-
-        const userResult = await pool.query(
-            'SELECT * FROM users WHERE email = $1',
-            [email]
-        );
-
-        let user;
-
-        if (userResult.rows.length === 0) {
-
-            const newU = await pool.query(
-                "INSERT INTO users (email, name, role) VALUES ($1, $2, 'CUSTOMER') RETURNING *",
-                [email, name]
-            );
-
-            user = newU.rows[0];
-
-        } else {
-
-            user = userResult.rows[0];
-
-        }
-
-        return done(null, user);
-
-    } catch (err) {
-
-        return done(err);
-
+const dbPath = path.resolve(__dirname, 'database.sqlite');
+const db = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+        console.error('Database connection error:', err.message);
+    } else {
+        console.log('Connected to SQLite database.');
     }
+});
 
-}));
+db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        google_id TEXT UNIQUE,
+        email TEXT,
+        name TEXT,
+        role TEXT DEFAULT 'CUSTOMER'
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        request_id TEXT UNIQUE,
+        website_name TEXT,
+        original_requirements TEXT,
+        status TEXT DEFAULT 'REQUESTED',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )`);
+});
+
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    passport.use(new GoogleStrategy({
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback'
+    }, (accessToken, refreshToken, profile, done) => {
+        const email = profile.emails && profile.emails[0] ? profile.emails[0].value : '';
+        const name = profile.displayName || 'Customer';
+        const googleId = profile.id;
+
+        db.get('SELECT * FROM users WHERE google_id = ?', [googleId], (err, user) => {
+            if (err) return done(err);
+            if (user) {
+                return done(null, user);
+            } else {
+                db.run('INSERT INTO users (google_id, email, name, role) VALUES (?, ?, ?, ?)',
+                    [googleId, email, name, 'CUSTOMER'], function(err) {
+                        if (err) return done(err);
+                        db.get('SELECT * FROM users WHERE id = ?', [this.lastID], (err, newUser) => {
+                            return done(err, newUser);
+                        });
+                    });
+            }
+        });
+    }));
+}
 
 passport.serializeUser((user, done) => {
-    done(null, user.id);
+    done(null, { id: user.id, role: user.role });
 });
 
-passport.deserializeUser(async (id, done) => {
-
-    try {
-
-        const res = await pool.query(
-            'SELECT id, name, email, role FROM users WHERE id = $1',
-            [id]
-        );
-
-        done(null, res.rows[0] || null);
-
-    } catch (err) {
-
-        done(err, null);
-
-    }
-
+passport.deserializeUser((obj, done) => {
+    db.get('SELECT * FROM users WHERE id = ?', [obj.id], (err, user) => {
+        if (err || !user) return done(err, null);
+        done(null, user);
+    });
 });
 
-// ============================================================
-// DATABASE INITIALIZATION
-// ============================================================
+function isAuthenticated(req, res, next) {
+    if (req.isAuthenticated()) return next();
+    res.status(401).json({ error: 'Authentication required' });
+}
 
-async function initDB() {
+function isSuperAdmin(req, res, next) {
+    if (req.isAuthenticated() && req.user && req.user.role === 'SUPER_ADMIN') {
+        return next();
+    }
+    res.status(403).json({ error: 'Admin authorization required' });
+}
 
+app.get('/api/auth/google',
+    passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+app.get('/api/auth/google/callback',
+    passport.authenticate('google', { failureRedirect: '/' }),
+    (req, res) => {
+        res.redirect('/');
+    }
+);
+
+app.get('/api/auth/me', (req, res) => {
+    if (req.isAuthenticated()) {
+        res.json({
+            id: req.user.id,
+            email: req.user.email,
+            name: req.user.name,
+            role: req.user.role
+        });
+    } else {
+        res.status(401).json({ error: 'Not authenticated' });
+    }
+});
+
+app.post('/api/auth/logout', (req, res, next) => {
+    req.logout((err) => {
+        if (err) return next(err);
+        req.session.destroy(() => {
+            res.clearCookie('connect.sid');
+            res.json({ success: true });
+        });
+    });
+});
+
+app.post('/api/auth/admin-login', adminLoginLimiter, async (req, res) => {
     try {
+        const { email, password } = req.body;
 
-        await pool.query(`
-
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                name VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'CUSTOMER',
-                password_hash VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'ACTIVE',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS projects (
-                id SERIAL PRIMARY KEY,
-                request_id VARCHAR(50) UNIQUE NOT NULL,
-                user_id INTEGER REFERENCES users(id),
-                website_name VARCHAR(255),
-                website_type VARCHAR(50) DEFAULT 'CUSTOM',
-                release_mode VARCHAR(50) DEFAULT 'MANUAL',
-                status VARCHAR(50) DEFAULT 'UNDER REVIEW',
-                original_requirements TEXT,
-                approved_scope TEXT,
-                standard_price INTEGER,
-                final_price INTEGER,
-                payment_status VARCHAR(50) DEFAULT 'UNPAID',
-                live_url VARCHAR(255),
-                is_released BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS versions (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_number INTEGER NOT NULL,
-                title VARCHAR(255),
-                description TEXT,
-                preview_url VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'DRAFT',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS approvals (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_id INTEGER REFERENCES versions(id),
-                user_id INTEGER REFERENCES users(id),
-                approved_scope_snapshot TEXT,
-                approved_price INTEGER,
-                approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS deployments (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_id INTEGER REFERENCES versions(id),
-                environment VARCHAR(50) DEFAULT 'PRODUCTION',
-                status VARCHAR(50) DEFAULT 'QUEUED',
-                deployment_url VARCHAR(255),
-                health_status VARCHAR(50) DEFAULT 'UNKNOWN',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS notifications (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
-                title VARCHAR(255),
-                message TEXT,
-                is_read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS pricing_plans (
-                id SERIAL PRIMARY KEY,
-                plan_key VARCHAR(50) UNIQUE NOT NULL,
-                name VARCHAR(100) NOT NULL,
-                price VARCHAR(50) NOT NULL,
-                description TEXT,
-                badge VARCHAR(50),
-                highlights TEXT[]
-            );
-
-            CREATE TABLE IF NOT EXISTS services (
-                id SERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                description TEXT,
-                icon VARCHAR(50),
-                category VARCHAR(100),
-                sort_order INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS faqs (
-                id SERIAL PRIMARY KEY,
-                category VARCHAR(100),
-                question TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                is_published BOOLEAN DEFAULT TRUE
-            );
-
-            CREATE TABLE IF NOT EXISTS portfolio (
-                id SERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                category VARCHAR(100),
-                description TEXT,
-                image_url VARCHAR(255)
-            );
-
-            CREATE TABLE IF NOT EXISTS how_it_works (
-                id SERIAL PRIMARY KEY,
-                step_num VARCHAR(10) NOT NULL,
-                title VARCHAR(255) NOT NULL,
-                description TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS maintenance_tasks (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                task_description TEXT NOT NULL,
-                status VARCHAR(50) DEFAULT 'REQUESTED',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS modifications (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                message TEXT,
-                status VARCHAR(50) DEFAULT 'PENDING REVIEW',
-                linked_version_id INTEGER REFERENCES versions(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS domains (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                domain_name VARCHAR(255) NOT NULL,
-                status VARCHAR(50) DEFAULT 'PENDING',
-                expiry_date TIMESTAMP,
-                verified_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS payments (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                order_id VARCHAR(100) UNIQUE NOT NULL,
-                amount INTEGER NOT NULL,
-                status VARCHAR(50) DEFAULT 'UNPAID',
-                gateway_payment_id VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id SERIAL PRIMARY KEY,
-                actor_id INTEGER REFERENCES users(id),
-                action VARCHAR(100) NOT NULL,
-                entity_type VARCHAR(50),
-                entity_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS support_tickets (
-                id SERIAL PRIMARY KEY,
-                ticket_id VARCHAR(50) UNIQUE NOT NULL,
-                user_id INTEGER REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
-                subject VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'OPEN',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS support_messages (
-                id SERIAL PRIMARY KEY,
-                ticket_id INTEGER REFERENCES support_tickets(id),
-                sender_id INTEGER REFERENCES users(id),
-                message TEXT,
-                is_internal BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-        `);
-
-        // ========================================================
-        // SUPER ADMIN
-        // ========================================================
-
-        const adminCheck = await pool.query(
-            "SELECT * FROM users WHERE email = 'admin@web4u.com'"
-        );
-
-        if (adminCheck.rows.length === 0) {
-
-            const hash = await bcrypt.hash(
-                'admin123',
-                10
-            );
-
-            await pool.query(
-                "INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4)",
-                [
-                    'admin@web4u.com',
-                    'Super Admin',
-                    'SUPER_ADMIN',
-                    hash
-                ]
-            );
-
+        if (!email || !password) {
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        console.log(
-            'Database initialized and fully migrated successfully.'
-        );
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
 
-    } catch (err) {
-
-        console.error(
-            'DB Init Error:',
-            err
-        );
-
-    }
-
-}
-
-initDB();
-
-// ============================================================
-// AUTH MIDDLEWARE
-// ============================================================
-
-const auth = (req, res, next) => {
-
-    if (
-        !req.user &&
-        !req.session.userId
-    ) {
-
-        return res.status(401).json({
-            error: 'Unauthorized'
-        });
-
-    }
-
-    if (
-        !req.session.userId &&
-        req.user
-    ) {
-
-        req.session.userId = req.user.id;
-
-    }
-
-    next();
-
-};
-
-const superAdminAuth = async (req, res, next) => {
-
-    const userId =
-        req.session.userId ||
-        (req.user && req.user.id);
-
-    if (!userId) {
-
-        return res.status(401).json({
-            error: 'Unauthorized'
-        });
-
-    }
-
-    const user = await pool.query(
-        'SELECT role FROM users WHERE id = $1',
-        [userId]
-    );
-
-    if (
-        !user.rows.length ||
-        user.rows[0].role !== 'SUPER_ADMIN'
-    ) {
-
-        return res.status(403).json({
-            error: 'Forbidden. Super Admin access required.'
-        });
-
-    }
-
-    next();
-
-};
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-async function logAudit(
-    actorId,
-    action,
-    type,
-    entityId
-) {
-
-    await pool.query(
-        'INSERT INTO audit_logs (actor_id, action, entity_type, entity_id) VALUES ($1, $2, $3, $4)',
-        [
-            actorId,
-            action,
-            type,
-            entityId
-        ]
-    );
-
-}
-
-async function createNotification(
-    userId,
-    projectId,
-    title,
-    message
-) {
-
-    await pool.query(
-        'INSERT INTO notifications (user_id, project_id, title, message) VALUES ($1, $2, $3, $4)',
-        [
-            userId,
-            projectId,
-            title,
-            message
-        ]
-    );
-
-}
-
-// ============================================================
-// GOOGLE LOGIN
-// ============================================================
-
-app.get(
-    '/api/auth/google',
-    passport.authenticate(
-        'google',
-        {
-            scope: ['profile', 'email']
+        if (!adminEmail || !adminPasswordHash) {
+            console.error('CRITICAL ERROR: Admin environment variables are not configured.');
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
-    )
-);
 
-app.get(
-    '/api/auth/google/callback',
-    passport.authenticate(
-        'google',
-        {
-            failureRedirect: '/'
-        }
-    ),
-    (req, res) => {
-req.session.userId =
-    req.user.id;
+        // Constant-time check comparison
+        const emailMatch = (email.trim().toLowerCase() === adminEmail.trim().toLowerCase());
+        const passwordMatch = await bcrypt.compare(password, adminPasswordHash);
 
-res.redirect('/');
+        if (emailMatch && passwordMatch) {
+            db.get('SELECT * FROM users WHERE email = ? AND role = ?', [adminEmail, 'SUPER_ADMIN'], async (err, adminUser) => {
+                if (err) return res.status(500).json({ error: 'Internal server error' });
 
-}
-);
+                const completeLogin = (userObj) => {
+                    // Regenerate session to prevent session fixation attacks
+                    req.session.regenerate((err) => {
+                        if (err) return res.status(500).json({ error: 'Internal server error' });
+                        req.login(userObj, (err) => {
+                            if (err) return res.status(500).json({ error: 'Internal server error' });
+                            return res.json({
+                                success: true,
+                                user: {
+                                    id: userObj.id,
+                                    email: userObj.email,
+                                    name: userObj.name,
+                                    role: userObj.role
+                                }
+                            });
+                        });
+                    });
+                };
 
-// ============================================================
-// ADMIN LOGIN
-// ============================================================
-
-app.post(
-    '/api/auth/admin-login',
-    async (req, res) => {
-
-        const {
-            email,
-            password
-        } = req.body;
-
-        const user =
-            await pool.query(
-                "SELECT * FROM users WHERE email = $1 AND role = 'SUPER_ADMIN'",
-                [email]
-            );
-
-        if (
-            user.rows.length > 0 &&
-            await bcrypt.compare(
-                password,
-                user.rows[0].password_hash
-            )
-        ) {
-
-            req.session.userId =
-                user.rows[0].id;
-
-            return res.json({
-                success: true,
-                user: {
-                    id: user.rows[0].id,
-                    name: user.rows[0].name,
-                    email: user.rows[0].email,
-                    role: user.rows[0].role
+                if (!adminUser) {
+                    db.run('INSERT INTO users (email, name, role) VALUES (?, ?, ?)',
+                        [adminEmail, 'Super Admin', 'SUPER_ADMIN'], function(err) {
+                            if (err) return res.status(500).json({ error: 'Internal server error' });
+                            db.get('SELECT * FROM users WHERE id = ?', [this.lastID], (err, newUser) => {
+                                if (err || !newUser) return res.status(500).json({ error: 'Internal server error' });
+                                completeLogin(newUser);
+                            });
+                        });
+                } else {
+                    completeLogin(adminUser);
                 }
             });
-
+        } else {
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
+    } catch (e) {
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
-        res.status(401).json({
-            error: 'Invalid admin credentials'
+app.post('/api/projects', isAuthenticated, (req, res) => {
+    const { requirements } = req.body;
+    if (!requirements || !requirements.trim()) {
+        return res.status(400).json({ error: 'Requirements are required' });
+    }
+
+    const userId = req.user.id;
+    const requestId = 'W4-' + Math.floor(100000 + Math.random() * 900000);
+    const websiteName = 'Custom Website ' + requestId;
+
+    db.run('INSERT INTO projects (user_id, request_id, website_name, original_requirements, status) VALUES (?, ?, ?, ?, ?)',
+        [userId, requestId, websiteName, requirements, 'REQUESTED'], function(err) {
+            if (err) return res.status(500).json({ error: 'Failed to create project' });
+            res.json({ success: true, projectId: this.lastID, request_id: requestId });
         });
-
-    }
-);
-
-// ============================================================
-// LOGOUT
-// ============================================================
-
-app.post(
-    '/api/auth/logout',
-    (req, res) => {
-
-        req.session.destroy(
-            () => {}
-        );
-
-        res.json({
-            success: true
-        });
-
-    }
-);
-
-// ============================================================
-// CURRENT USER
-// ============================================================
-
-app.get(
-    '/api/auth/me',
-    async (req, res) => {
-
-        const uid =
-            req.session.userId ||
-            (req.user && req.user.id);
-
-        if (!uid) {
-
-            return res.status(401).json({
-                error: 'Not logged in'
-            });
-
-        }
-
-        const user =
-            await pool.query(
-                'SELECT id, name, email, role FROM users WHERE id = $1',
-                [uid]
-            );
-
-        if (!user.rows.length) {
-
-            return res.status(404).json({
-                error: 'User not found'
-            });
-
-        }
-
-        res.json(
-            user.rows[0]
-        );
-
-    }
-);
-
-// ============================================================
-// PUBLIC CMS
-// ============================================================
-
-app.get(
-    '/api/pricing',
-    async (req, res) => {
-
-        const plans =
-            await pool.query(
-                'SELECT * FROM pricing_plans'
-            );
-
-        res.json(
-            plans.rows
-        );
-
-    }
-);
-
-app.get(
-    '/api/services',
-    async (req, res) => {
-
-        const services =
-            await pool.query(
-                'SELECT * FROM services ORDER BY sort_order ASC'
-            );
-
-        res.json(
-            services.rows
-        );
-
-    }
-);
-
-app.get(
-    '/api/faqs',
-    async (req, res) => {
-
-        const faqs =
-            await pool.query(
-                'SELECT * FROM faqs WHERE is_published = TRUE'
-            );
-
-        res.json(
-            faqs.rows
-        );
-
-    }
-);
-
-app.get(
-    '/api/portfolio',
-    async (req, res) => {
-
-        const portfolio =
-            await pool.query(
-                'SELECT * FROM portfolio'
-            );
-
-        res.json(
-            portfolio.rows
-        );
-
-    }
-);
-
-app.get(
-    '/api/how-it-works',
-    async (req, res) => {
-
-        const steps =
-            await pool.query(
-                'SELECT * FROM how_it_works ORDER BY step_num ASC'
-            );
-
-        res.json(
-            steps.rows
-        );
-
-    }
-);
-
-// ============================================================
-// CUSTOMER PROJECTS
-// ============================================================
-
-app.post(
-    '/api/projects',
-    auth,
-    async (req, res) => {
-
-        const {
-            requirements
-        } = req.body;
-
-        const reqId =
-            'W4U-' +
-            Math.floor(
-                1000 +
-                Math.random() *
-                9000
-            );
-
-        const userId =
-            req.session.userId;
-
-        const result =
-            await pool.query(
-                `INSERT INTO projects
-                (
-                    request_id,
-                    user_id,
-                    original_requirements,
-                    website_name
-                )
-                VALUES ($1, $2, $3, $4)
-                RETURNING *`,
-                [
-                    reqId,
-                    userId,
-                    requirements,
-                    'New Custom Website Request'
-                ]
-            );
-
-        await logAudit(
-            userId,
-            'SUBMITTED_REQUEST',
-            'PROJECT',
-            result.rows[0].id
-        );
-
-        await createNotification(
-            userId,
-            result.rows[0].id,
-            'Request Received',
-            `Your website request ${reqId} has been successfully received.`
-        );
-
-        res.json(
-            result.rows[0]
-        );
-
-    }
-);
-
-app.get(
-    '/api/customer/projects',
-    auth,
-    async (req, res) => {
-
-        const result =
-            await pool.query(
-                'SELECT * FROM projects WHERE user_id = $1 ORDER BY created_at DESC',
-                [req.session.userId]
-            );
-
-        const safeProjects =
-            result.rows.map(
-                p => {
-
-                    if (!p.is_released) {
-                        p.live_url = null;
-                    }
-
-                    return p;
-
-                }
-            );
-
-        res.json(
-            safeProjects
-        );
-
-    }
-);
-
-app.get(
-    '/api/customer/projects/:id',
-    auth,
-    async (req, res) => {
-
-        const result =
-            await pool.query(
-                'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
-                [
-                    req.params.id,
-                    req.session.userId
-                ]
-            );
-
-        if (
-            result.rows.length === 0
-        ) {
-
-            return res.status(404).json({
-                error: 'Not found'
-            });
-
-        }
-
-        const project =
-            result.rows[0];
-
-        if (!project.is_released) {
-            project.live_url = null;
-        }
-
-        const modifications =
-            await pool.query(
-                'SELECT * FROM modifications WHERE project_id = $1 ORDER BY created_at DESC',
-                [project.id]
-            );
-
-        const versions =
-            await pool.query(
-                'SELECT * FROM versions WHERE project_id = $1 ORDER BY version_number DESC',
-                [project.id]
-            );
-
-        const deployments =
-            await pool.query(
-                'SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC',
-                [project.id]
-            );
-
-        project.modifications =
-            modifications.rows;
-
-        project.versions =
-            versions.rows;
-
-        project.deployments =
-            deployments.rows;
-
-        res.json(
-            project
-        );
-
-    }
-);
-
-// ============================================================
-// MODIFICATIONS
-// ============================================================
-
-app.post(
-    '/api/customer/projects/:id/modifications',
-    auth,
-    async (req, res) => {
-
-        const {
-            message
-        } = req.body;
-
-        const project =
-            await pool.query(
-                'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
-                [
-                    req.params.id,
-                    req.session.userId
-                ]
-            );
-
-        if (
-            project.rows.length === 0
-        ) {
-
-            return res.status(403).json({
-                error: 'Forbidden'
-            });
-
-        }
-
-        const modification =
-            await pool.query(
-                'INSERT INTO modifications (project_id, message) VALUES ($1, $2) RETURNING *',
-                [
-                    project.rows[0].id,
-                    message
-                ]
-            );
-
-        await logAudit(
-            req.session.userId,
-            'SUBMITTED_MODIFICATION',
-            'PROJECT',
-            project.rows[0].id
-        );
-
-        res.json(
-            modification.rows[0]
-        );
-
-    }
-);
-
-// ============================================================
-// APPROVAL
-// ============================================================
-
-app.post(
-    '/api/customer/projects/:id/approve',
-    auth,
-    async (req, res) => {
-
-        const {
-            versionId
-        } = req.body;
-
-        const project =
-            await pool.query(
-                'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
-                [
-                    req.params.id,
-                    req.session.userId
-                ]
-            );
-
-        if (
-            project.rows.length === 0
-        ) {
-
-            return res.status(403).json({
-                error: 'Forbidden'
-            });
-
-        }
-
-        await pool.query(
-            `INSERT INTO approvals
-            (
-                project_id,
-                version_id,
-                user_id,
-                approved_scope_snapshot,
-                approved_price
-            )
-            VALUES ($1, $2, $3, $4, $5)`,
-            [
-                project.rows[0].id,
-                versionId || null,
-                req.session.userId,
-                project.rows[0].original_requirements,
-                project.rows[0].final_price
-            ]
-        );
-
-        await pool.query(
-            "UPDATE projects SET status = 'AWAITING PAYMENT' WHERE id = $1",
-            [project.rows[0].id]
-        );
-
-        await logAudit(
-            req.session.userId,
-            'APPROVED_PROJECT',
-            'PROJECT',
-            project.rows[0].id
-        );
-
-        res.json({
-            success: true
-        });
-
-    }
-);
-
-// ============================================================
-// SUPER ADMIN PROJECTS
-// ============================================================
-
-app.get(
-    '/api/admin/projects',
-    superAdminAuth,
-    async (req, res) => {
-
-        const result =
-            await pool.query(`
-                SELECT
-                    p.*,
-                    u.name AS customer_name,
-                    u.email AS customer_email
-                FROM projects p
-                JOIN users u
-                    ON p.user_id = u.id
-                ORDER BY p.created_at DESC
-            `);
-
-        res.json(
-            result.rows
-        );
-
-    }
-);
-
-app.put(
-    '/api/admin/projects/:id',
-    superAdminAuth,
-    async (req, res) => {
-
-        const {
-            status,
-            final_price,
-            approved_scope,
-            is_released,
-            website_type,
-            release_mode,
-            live_url
-        } = req.body;
-
-        const result =
-            await pool.query(
-                `UPDATE projects
-                SET
-                    status = COALESCE($1, status),
-                    final_price = COALESCE($2, final_price),
-                    approved_scope = COALESCE($3, approved_scope),
-                    is_released = COALESCE($4, is_released),
-                    website_type = COALESCE($5, website_type),
-                    release_mode = COALESCE($6, release_mode),
-                    live_url = COALESCE($7, live_url)
-                WHERE id = $8
-                RETURNING *`,
-                [
-                    status,
-                    final_price,
-                    approved_scope,
-                    is_released,
-                    website_type,
-                    release_mode,
-                    live_url,
-                    req.params.id
-                ]
-            );
-
-        await logAudit(
-            req.session.userId,
-            'ADMIN_UPDATED_PROJECT',
-            'PROJECT',
-            req.params.id
-        );
-
-        res.json(
-            result.rows[0]
-        );
-
-    }
-);
-
-// ============================================================
-// ADMIN VERSIONS
-// ============================================================
-
-app.post(
-    '/api/admin/projects/:id/versions',
-    superAdminAuth,
-    async (req, res) => {
-
-        const {
-            versionNumber,
-            title,
-            description,
-            previewUrl
-        } = req.body;
-
-        const version =
-            await pool.query(
-                `INSERT INTO versions
-                (
-                    project_id,
-                    version_number,
-                    title,
-                    description,
-                    preview_url
-                )
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *`,
-                [
-                    req.params.id,
-                    versionNumber,
-                    title,
-                    description,
-                    previewUrl
-                ]
-            );
-
-        await logAudit(
-            req.session.userId,
-            'CREATED_VERSION',
-            'VERSION',
-            version.rows[0].id
-        );
-
-        res.json(
-            version.rows[0]
-        );
-
-    }
-);
-
-// ============================================================
-// CASHFREE
-// ============================================================
-
-app.post(
-    '/api/payments/create-order',
-    auth,
-    async (req, res) => {
-
-        const {
-            projectId
-        } = req.body;
-
-        const project =
-            await pool.query(
-                'SELECT id, final_price, status FROM projects WHERE id = $1 AND user_id = $2',
-                [
-                    projectId,
-                    req.session.userId
-                ]
-            );
-
-        if (
-            project.rows.length === 0
-        ) {
-
-            return res.status(403).json({
-                error: 'Forbidden'
-            });
-
-        }
-
-        if (
-            !project.rows[0].final_price
-        ) {
-
-            return res.status(400).json({
-                error: 'Price not yet confirmed.'
-            });
-
-        }
-
-        const orderId =
-            `order_${projectId}_${Date.now()}`;
-
-        const amount =
-            project.rows[0].final_price;
-
-        await pool.query(
-            'INSERT INTO payments (project_id, order_id, amount) VALUES ($1, $2, $3)',
-            [
-                projectId,
-                orderId,
-                amount
-            ]
-        );
-
-        await logAudit(
-            req.session.userId,
-            'PAYMENT_ORDER_CREATED',
-            'PROJECT',
-            projectId
-        );
-
-        res.json({
-            payment_session_id:
-                `session_token_${orderId}`,
-            order_id:
-                orderId
-        });
-
-    }
-);
-
-app.post(
-    '/api/webhooks/cashfree',
-    express.raw({
-        type: 'application/json'
-    }),
-    async (req, res) => {
-
-        const signature =
-            req.headers['x-webhook-signature'];
-
-        const timestamp =
-            req.headers['x-webhook-timestamp'];
-
-        const bodyString =
-            req.body.toString('utf8');
-
-        const expectedSignature =
-            crypto
-                .createHmac(
-                    'sha256',
-                    process.env.CASHFREE_WEBHOOK_SECRET ||
-                    'dev_secret'
-                )
-                .update(
-                    timestamp +
-                    bodyString
-                )
-                .digest('base64');
-
-        if (
-            process.env.NODE_ENV === 'production' &&
-            signature !== expectedSignature
-        ) {
-
-            return res.status(400).send(
-                'Invalid signature'
-            );
-
-        }
-
-        const event =
-            JSON.parse(bodyString);
-
-        if (
-            event.type ===
-            'PAYMENT_SUCCESS_WEBHOOK'
-        ) {
-
-            const orderId =
-                event.data.order.order_id;
-
-            await pool.query(
-                "UPDATE payments SET status = 'PAID' WHERE order_id = $1",
-                [orderId]
-            );
-
-            const paymentData =
-                await pool.query(
-                    "SELECT project_id FROM payments WHERE order_id = $1",
-                    [orderId]
-                );
-
-            if (
-                paymentData.rows.length > 0
-            ) {
-
-                const projectId =
-                    paymentData.rows[0].project_id;
-
-                await pool.query(
-                    "UPDATE projects SET payment_status = 'PAID', status = 'PAYMENT RECEIVED' WHERE id = $1",
-                    [projectId]
-                );
-
-                const project =
-                    await pool.query(
-                        'SELECT website_type, release_mode FROM projects WHERE id = $1',
-                        [projectId]
-                    );
-
-                if (
-                    project.rows[0] &&
-                    project.rows[0].website_type === 'BASIC' &&
-                    project.rows[0].release_mode ===
-                    'AUTOMATIC_AFTER_VERIFIED_PAYMENT'
-                ) {
-
-                    await pool.query(
-                        "UPDATE projects SET is_released = TRUE, status = 'PUBLISHED' WHERE id = $1",
-                        [projectId]
-                    );
-
-                    await logAudit(
-                        null,
-                        'AUTO_RELEASED_WEBSITE',
-                        'PROJECT',
-                        projectId
-                    );
-
-                }
-
-            }
-
-        }
-
-        res.status(200).send(
-            'Webhook processed'
-        );
-
-    }
-);
-
-// ============================================================
-// IMPORTANT: SERVE FRONTEND
-// ============================================================
-
-app.get(
-    '/',
-    (req, res) => {
-
-        res.sendFile(
-            __dirname + '/index.html'
-        );
-
-    }
-);
-
-// ============================================================
-// SERVER
-// ============================================================
-
-const PORT =
-    process.env.PORT || 3000;
-
-app.listen(
-    PORT,
-    () => {
-
-        console.log(
-            `WEB4U Production Backend running on port ${PORT}`
-        );
-
-    }
-);
+});
+
+app.get('/api/customer/projects', isAuthenticated, (req, res) => {
+    const userId = req.user.id;
+    db.all('SELECT * FROM projects WHERE user_id = ? ORDER BY id DESC', [userId], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to retrieve projects' });
+        res.json(rows);
+    });
+});
+
+app.get('/api/customer/projects/:id', isAuthenticated, (req, res) => {
+    const userId = req.user.id;
+    const projectId = req.params.id;
+
+    db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId], (err, project) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (!project) return res.status(404).json({ error: 'Project not found or unauthorized' });
+        res.json(project);
+    });
+});
+
+app.get('/api/admin/projects', isSuperAdmin, (req, res) => {
+    const query = `
+        SELECT p.*, u.name as customer_name, u.email as customer_email 
+        FROM projects p 
+        LEFT JOIN users u ON p.user_id = u.id 
+        ORDER BY p.id DESC
+    `;
+    db.all(query, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to fetch admin projects' });
+        res.json(rows);
+    });
+});
+
+// Global Error Handler Guardrail (Prevents stack trace leaks)
+app.use((err, req, res, next) => {
+    console.error('Unhandled Server Error:', err.message);
+    res.status(500).json({ error: 'An unexpected internal error occurred.' });
+});
+
+app.listen(PORT, () => {
+    console.log(`WEB4U Secure Server running on port ${PORT}`);
+});
