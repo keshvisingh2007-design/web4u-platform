@@ -1,893 +1,418 @@
-require('dotenv').config();
-const express = require('express');
-const { Pool } = require('pg');
-const session = require('express-session');
-const bcrypt = require('bcrypt');
-const crypto = require('crypto');
-const cors = require('cors');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-
-const app = express();
-
-app.use(express.json());
-app.use(cors({ origin: true, credentials: true }));
-
-// Secure Session Configuration
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'dev_fallback_secret_web4u_2026',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000
-    }
-}));
-
-app.use(passport.initialize());
-app.use(passport.session());
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-});
-
-// --- Real Google OAuth 2.0 Configuration ---
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID || 'placeholder_client_id',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'placeholder_client_secret',
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/api/auth/google/callback'
-}, async (accessToken, refreshToken, profile, done) => {
-    try {
-        const email = profile.emails && profile.emails[0]
-            ? profile.emails[0].value
-            : null;
-
-        const name = profile.displayName || 'Google User';
-
-        if (!email) {
-            return done(new Error('No email found from Google Profile'));
-        }
-
-        let userResult = await pool.query(
-            'SELECT * FROM users WHERE email = $1',
-            [email]
-        );
-
-        let user;
-
-        if (userResult.rows.length === 0) {
-            const newU = await pool.query(
-                "INSERT INTO users (email, name, role) VALUES ($1, $2, 'CUSTOMER') RETURNING *",
-                [email, name]
-            );
-
-            user = newU.rows[0];
-        } else {
-            user = userResult.rows[0];
-        }
-
-        return done(null, user);
-
-    } catch (err) {
-        return done(err);
-    }
-}));
-
-passport.serializeUser((user, done) => done(null, user.id));
-
-passport.deserializeUser(async (id, done) => {
-    try {
-        const res = await pool.query(
-            'SELECT id, name, email, role FROM users WHERE id = $1',
-            [id]
-        );
-
-        done(null, res.rows[0] || null);
-
-    } catch (err) {
-        done(err, null);
-    }
-});
-
-// --- Additive Migration & Database Initialization Engine ---
-async function initDB() {
-    try {
-
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                name VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'CUSTOMER',
-                password_hash VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'ACTIVE',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS projects (
-                id SERIAL PRIMARY KEY,
-                request_id VARCHAR(50) UNIQUE NOT NULL,
-                user_id INTEGER REFERENCES users(id),
-                website_name VARCHAR(255),
-                website_type VARCHAR(50) DEFAULT 'CUSTOM',
-                release_mode VARCHAR(50) DEFAULT 'MANUAL',
-                status VARCHAR(50) DEFAULT 'UNDER REVIEW',
-                original_requirements TEXT,
-                approved_scope TEXT,
-                standard_price INTEGER,
-                final_price INTEGER,
-                payment_status VARCHAR(50) DEFAULT 'UNPAID',
-                live_url VARCHAR(255),
-                is_released BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS versions (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_number INTEGER NOT NULL,
-                title VARCHAR(255),
-                description TEXT,
-                preview_url VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'DRAFT',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS approvals (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_id INTEGER REFERENCES versions(id),
-                user_id INTEGER REFERENCES users(id),
-                approved_scope_snapshot TEXT,
-                approved_price INTEGER,
-                approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS deployments (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                version_id INTEGER REFERENCES versions(id),
-                environment VARCHAR(50) DEFAULT 'PRODUCTION',
-                status VARCHAR(50) DEFAULT 'QUEUED',
-                deployment_url VARCHAR(255),
-                health_status VARCHAR(50) DEFAULT 'UNKNOWN',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS notifications (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
-                title VARCHAR(255),
-                message TEXT,
-                is_read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS pricing_plans (
-                id SERIAL PRIMARY KEY,
-                plan_key VARCHAR(50) UNIQUE NOT NULL,
-                name VARCHAR(100) NOT NULL,
-                price VARCHAR(50) NOT NULL,
-                description TEXT,
-                badge VARCHAR(50),
-                highlights TEXT[]
-            );
-
-            CREATE TABLE IF NOT EXISTS services (
-                id SERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                description TEXT,
-                icon VARCHAR(50),
-                category VARCHAR(100),
-                sort_order INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS faqs (
-                id SERIAL PRIMARY KEY,
-                category VARCHAR(100),
-                question TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                is_published BOOLEAN DEFAULT TRUE
-            );
-
-            CREATE TABLE IF NOT EXISTS portfolio (
-                id SERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                category VARCHAR(100),
-                description TEXT,
-                image_url VARCHAR(255)
-            );
-
-            CREATE TABLE IF NOT EXISTS how_it_works (
-                id SERIAL PRIMARY KEY,
-                step_num VARCHAR(10) NOT NULL,
-                title VARCHAR(255) NOT NULL,
-                description TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS maintenance_tasks (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                task_description TEXT NOT NULL,
-                status VARCHAR(50) DEFAULT 'REQUESTED',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS modifications (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                message TEXT,
-                status VARCHAR(50) DEFAULT 'PENDING REVIEW',
-                linked_version_id INTEGER REFERENCES versions(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS domains (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                domain_name VARCHAR(255) NOT NULL,
-                status VARCHAR(50) DEFAULT 'PENDING',
-                expiry_date TIMESTAMP,
-                verified_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS payments (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                order_id VARCHAR(100) UNIQUE NOT NULL,
-                amount INTEGER NOT NULL,
-                status VARCHAR(50) DEFAULT 'UNPAID',
-                gateway_payment_id VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id SERIAL PRIMARY KEY,
-                actor_id INTEGER REFERENCES users(id),
-                action VARCHAR(100) NOT NULL,
-                entity_type VARCHAR(50),
-                entity_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS support_tickets (
-                id SERIAL PRIMARY KEY,
-                ticket_id VARCHAR(50) UNIQUE NOT NULL,
-                user_id INTEGER REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
-                subject VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'OPEN',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS support_messages (
-                id SERIAL PRIMARY KEY,
-                ticket_id INTEGER REFERENCES support_tickets(id),
-                sender_id INTEGER REFERENCES users(id),
-                message TEXT,
-                is_internal BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-
-        // Seed Super Admin if not present
-        const adminCheck = await pool.query(
-            "SELECT * FROM users WHERE email = 'admin@web4u.com'"
-        );
-
-        if (adminCheck.rows.length === 0) {
-            const hash = await bcrypt.hash('admin123', 10);
-
-            await pool.query(
-                "INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4)",
-                [
-                    'admin@web4u.com',
-                    'Super Admin',
-                    'SUPER_ADMIN',
-                    hash
-                ]
-            );
-        }
-
-        console.log("Database initialized and fully migrated successfully.");
-
-    } catch (err) {
-        console.error("DB Init Error:", err);
-    }
-}
-
-initDB();
-
-// --- Middleware & Guards ---
-const auth = (req, res, next) => {
-    if (!req.user && !req.session.userId) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    if (!req.session.userId && req.user) {
-        req.session.userId = req.user.id;
-    }
-
-    next();
-};
-
-const superAdminAuth = async (req, res, next) => {
-    const userId = req.session.userId || (req.user && req.user.id);
-
-    if (!userId) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const user = await pool.query(
-        'SELECT role FROM users WHERE id = $1',
-        [userId]
-    );
-
-    if (!user.rows.length || user.rows[0].role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-            error: 'Forbidden. Super Admin access required.'
-        });
-    }
-
-    next();
-};
-
-async function logAudit(actorId, action, type, entityId) {
-    await pool.query(
-        'INSERT INTO audit_logs (actor_id, action, entity_type, entity_id) VALUES ($1, $2, $3, $4)',
-        [actorId, action, type, entityId]
-    );
-}
-
-async function createNotification(userId, projectId, title, message) {
-    await pool.query(
-        'INSERT INTO notifications (user_id, project_id, title, message) VALUES ($1, $2, $3, $4)',
-        [userId, projectId, title, message]
-    );
-}
-
-// --- Real Google OAuth Routes ---
-app.get(
-    '/api/auth/google',
-    passport.authenticate('google', {
-        scope: ['profile', 'email']
-    })
-);
-
-app.get(
-    '/api/auth/google/callback',
-    passport.authenticate('google', {
-        failureRedirect: '/'
-    }),
-    (req, res) => {
-        req.session.userId = req.user.id;
-        res.redirect('/my-websites');
-    }
-);
-
-// --- Standard Auth Routes ---
-app.post('/api/auth/admin-login', async (req, res) => {
-    const { email, password } = req.body;
-
-    const user = await pool.query(
-        "SELECT * FROM users WHERE email = $1 AND role = 'SUPER_ADMIN'",
-        [email]
-    );
-
-    if (
-        user.rows.length > 0 &&
-        await bcrypt.compare(password, user.rows[0].password_hash)
-    ) {
-        req.session.userId = user.rows[0].id;
-
-        res.json({
-            success: true,
-            user: {
-                id: user.rows[0].id,
-                name: user.rows[0].name,
-                email: user.rows[0].email,
-                role: user.rows[0].role
-            }
-        });
-
-    } else {
-        res.status(401).json({
-            error: 'Invalid admin credentials'
-        });
-    }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy(() => {});
-    res.json({ success: true });
-});
-
-app.get('/api/auth/me', async (req, res) => {
-    const uid = req.session.userId || (req.user && req.user.id);
-
-    if (!uid) {
-        return res.status(401).json({
-            error: 'Not logged in'
-        });
-    }
-
-    const user = await pool.query(
-        'SELECT id, name, email, role FROM users WHERE id = $1',
-        [uid]
-    );
-
-    if (!user.rows.length) {
-        return res.status(404).json({
-            error: 'User not found'
-        });
-    }
-
-    res.json(user.rows[0]);
-});
-
-// --- Public CMS & Content APIs ---
-app.get('/api/pricing', async (req, res) => {
-    const plans = await pool.query(
-        'SELECT * FROM pricing_plans'
-    );
-
-    res.json(plans.rows);
-});
-
-app.get('/api/services', async (req, res) => {
-    const srv = await pool.query(
-        'SELECT * FROM services ORDER BY sort_order ASC'
-    );
-
-    res.json(srv.rows);
-});
-
-app.get('/api/faqs', async (req, res) => {
-    const faqs = await pool.query(
-        'SELECT * FROM faqs WHERE is_published = TRUE'
-    );
-
-    res.json(faqs.rows);
-});
-
-app.get('/api/portfolio', async (req, res) => {
-    const port = await pool.query(
-        'SELECT * FROM portfolio'
-    );
-
-    res.json(port.rows);
-});
-
-app.get('/api/how-it-works', async (req, res) => {
-    const steps = await pool.query(
-        'SELECT * FROM how_it_works ORDER BY step_num ASC'
-    );
-
-    res.json(steps.rows);
-});
-
-// --- Customer Project & Modification APIs ---
-app.post('/api/projects', auth, async (req, res) => {
-    const { requirements } = req.body;
-
-    const reqId =
-        'W4U-' + Math.floor(1000 + Math.random() * 9000);
-
-    const userId = req.session.userId;
-
-    const result = await pool.query(
-        `INSERT INTO projects
-        (request_id, user_id, original_requirements, website_name)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *`,
-        [
-            reqId,
-            userId,
-            requirements,
-            'New Custom Website Request'
-        ]
-    );
-
-    await logAudit(
-        userId,
-        'SUBMITTED_REQUEST',
-        'PROJECT',
-        result.rows[0].id
-    );
-
-    await createNotification(
-        userId,
-        result.rows[0].id,
-        'Request Received',
-        `Your website request ${reqId} has been successfully received.`
-    );
-
-    res.json(result.rows[0]);
-});
-
-app.get('/api/customer/projects', auth, async (req, res) => {
-    const result = await pool.query(
-        'SELECT * FROM projects WHERE user_id = $1 ORDER BY created_at DESC',
-        [req.session.userId]
-    );
-
-    const safeProjects = result.rows.map(p => {
-        if (!p.is_released) {
-            p.live_url = null;
-        }
-
-        return p;
-    });
-
-    res.json(safeProjects);
-});
-
-app.get('/api/customer/projects/:id', auth, async (req, res) => {
-    const result = await pool.query(
-        'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
-        [
-            req.params.id,
-            req.session.userId
-        ]
-    );
-
-    if (result.rows.length === 0) {
-        return res.status(404).json({
-            error: 'Not found'
-        });
-    }
-
-    const proj = result.rows[0];
-
-    if (!proj.is_released) {
-        proj.live_url = null;
-    }
-
-    const mods = await pool.query(
-        'SELECT * FROM modifications WHERE project_id = $1 ORDER BY created_at DESC',
-        [proj.id]
-    );
-
-    const versions = await pool.query(
-        'SELECT * FROM versions WHERE project_id = $1 ORDER BY version_number DESC',
-        [proj.id]
-    );
-
-    const deployments = await pool.query(
-        'SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC',
-        [proj.id]
-    );
-
-    proj.modifications = mods.rows;
-    proj.versions = versions.rows;
-    proj.deployments = deployments.rows;
-
-    res.json(proj);
-});
-
-app.post('/api/customer/projects/:id/modifications', auth, async (req, res) => {
-    const { message } = req.body;
-
-    const proj = await pool.query(
-        'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
-        [
-            req.params.id,
-            req.session.userId
-        ]
-    );
-
-    if (proj.rows.length === 0) {
-        return res.status(403).json({
-            error: 'Forbidden'
-        });
-    }
-
-    const mod = await pool.query(
-        'INSERT INTO modifications (project_id, message) VALUES ($1, $2) RETURNING *',
-        [
-            proj.rows[0].id,
-            message
-        ]
-    );
-
-    await logAudit(
-        req.session.userId,
-        'SUBMITTED_MODIFICATION',
-        'PROJECT',
-        proj.rows[0].id
-    );
-
-    res.json(mod.rows[0]);
-});
-
-app.post('/api/customer/projects/:id/approve', auth, async (req, res) => {
-    const { versionId } = req.body;
-
-    const proj = await pool.query(
-        'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
-        [
-            req.params.id,
-            req.session.userId
-        ]
-    );
-
-    if (proj.rows.length === 0) {
-        return res.status(403).json({
-            error: 'Forbidden'
-        });
-    }
-
-    await pool.query(
-        `INSERT INTO approvals
-        (project_id, version_id, user_id, approved_scope_snapshot, approved_price)
-        VALUES ($1, $2, $3, $4, $5)`,
-        [
-            proj.rows[0].id,
-            versionId || null,
-            req.session.userId,
-            proj.rows[0].original_requirements,
-            proj.rows[0].final_price
-        ]
-    );
-
-    await pool.query(
-        "UPDATE projects SET status = 'AWAITING PAYMENT' WHERE id = $1",
-        [proj.rows[0].id]
-    );
-
-    await logAudit(
-        req.session.userId,
-        'APPROVED_PROJECT',
-        'PROJECT',
-        proj.rows[0].id
-    );
-
-    res.json({ success: true });
-});
-
-// --- Super Admin Operational APIs ---
-app.get('/api/admin/projects', superAdminAuth, async (req, res) => {
-    const result = await pool.query(`
-        SELECT p.*, u.name as customer_name, u.email as customer_email
-        FROM projects p
-        JOIN users u ON p.user_id = u.id
-        ORDER BY p.created_at DESC
-    `);
-
-    res.json(result.rows);
-});
-
-app.put('/api/admin/projects/:id', superAdminAuth, async (req, res) => {
-    const {
-        status,
-        final_price,
-        approved_scope,
-        is_released,
-        website_type,
-        release_mode,
-        live_url
-    } = req.body;
-
-    const result = await pool.query(
-        `UPDATE projects
-        SET
-            status = COALESCE($1, status),
-            final_price = COALESCE($2, final_price),
-            approved_scope = COALESCE($3, approved_scope),
-            is_released = COALESCE($4, is_released),
-            website_type = COALESCE($5, website_type),
-            release_mode = COALESCE($6, release_mode),
-            live_url = COALESCE($7, live_url)
-        WHERE id = $8
-        RETURNING *`,
-        [
-            status,
-            final_price,
-            approved_scope,
-            is_released,
-            website_type,
-            release_mode,
-            live_url,
-            req.params.id
-        ]
-    );
-
-    await logAudit(
-        req.session.userId,
-        'ADMIN_UPDATED_PROJECT',
-        'PROJECT',
-        req.params.id
-    );
-
-    res.json(result.rows[0]);
-});
-
-app.post('/api/admin/projects/:id/versions', superAdminAuth, async (req, res) => {
-    const {
-        versionNumber,
-        title,
-        description,
-        previewUrl
-    } = req.body;
-
-    const ver = await pool.query(
-        `INSERT INTO versions
-        (project_id, version_number, title, description, preview_url)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *`,
-        [
-            req.params.id,
-            versionNumber,
-            title,
-            description,
-            previewUrl
-        ]
-    );
-
-    await logAudit(
-        req.session.userId,
-        'CREATED_VERSION',
-        'VERSION',
-        ver.rows[0].id
-    );
-
-    res.json(ver.rows[0]);
-});
-
-// --- Real Cashfree Payment & Webhook APIs ---
-app.post('/api/payments/create-order', auth, async (req, res) => {
-    const { projectId } = req.body;
-
-    const proj = await pool.query(
-        'SELECT id, final_price, status FROM projects WHERE id = $1 AND user_id = $2',
-        [
-            projectId,
-            req.session.userId
-        ]
-    );
-
-    if (proj.rows.length === 0) {
-        return res.status(403).json({
-            error: 'Forbidden'
-        });
-    }
-
-    if (!proj.rows[0].final_price) {
-        return res.status(400).json({
-            error: 'Price not yet confirmed.'
-        });
-    }
-
-    const orderId =
-        `order_${projectId}_${Date.now()}`;
-
-    const amount = proj.rows[0].final_price;
-
-    await pool.query(
-        'INSERT INTO payments (project_id, order_id, amount) VALUES ($1, $2, $3)',
-        [
-            projectId,
-            orderId,
-            amount
-        ]
-    );
-
-    await logAudit(
-        req.session.userId,
-        'PAYMENT_ORDER_CREATED',
-        'PROJECT',
-        projectId
-    );
-
-    res.json({
-        payment_session_id: `session_token_${orderId}`,
-        order_id: orderId
-    });
-});
-
-app.post(
-    '/api/webhooks/cashfree',
-    express.raw({ type: 'application/json' }),
-    async (req, res) => {
-
-        const signature =
-            req.headers['x-webhook-signature'];
-
-        const timestamp =
-            req.headers['x-webhook-timestamp'];
-
-        const bodyString =
-            req.body.toString('utf8');
-
-        const expectedSignature =
-            crypto
-                .createHmac(
-                    'sha256',
-                    process.env.CASHFREE_WEBHOOK_SECRET || 'dev_secret'
-                )
-                .update(timestamp + bodyString)
-                .digest('base64');
-
-        if (
-            process.env.NODE_ENV === 'production' &&
-            signature !== expectedSignature
-        ) {
-            return res.status(400).send(
-                'Invalid signature'
-            );
-        }
-
-        const event = JSON.parse(bodyString);
-
-        if (event.type === 'PAYMENT_SUCCESS_WEBHOOK') {
-
-            const orderId =
-                event.data.order.order_id;
-
-            await pool.query(
-                "UPDATE payments SET status = 'PAID' WHERE order_id = $1",
-                [orderId]
-            );
-
-            const paymentData = await pool.query(
-                "SELECT project_id FROM payments WHERE order_id = $1",
-                [orderId]
-            );
-
-            if (paymentData.rows.length > 0) {
-
-                const projectId =
-                    paymentData.rows[0].project_id;
-
-                await pool.query(
-                    "UPDATE projects SET payment_status = 'PAID', status = 'PAYMENT RECEIVED' WHERE id = $1",
-                    [projectId]
-                );
-
-                // Automatic URL Release Logic for Basic Websites
-                const proj = await pool.query(
-                    'SELECT website_type, release_mode FROM projects WHERE id = $1',
-                    [projectId]
-                );
-
-                if (
-                    proj.rows[0].website_type === 'BASIC' &&
-                    proj.rows[0].release_mode === 'AUTOMATIC_AFTER_VERIFIED_PAYMENT'
-                ) {
-                    await pool.query(
-                        "UPDATE projects SET is_released = TRUE, status = 'PUBLISHED' WHERE id = $1",
-                        [projectId]
-                    );
-
-                    await logAudit(
-                        null,
-                        'AUTO_RELEASED_WEBSITE',
-                        'PROJECT',
-                        projectId
-                    );
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WEB4U — Custom Websites. Built Around Your Needs.</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
                 }
             }
         }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass-panel { background: rgba(24, 24, 27, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(63, 63, 70, 0.4); }
+        .glow-effect { box-shadow: 0 0 50px -10px rgba(99, 102, 241, 0.15); }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 antialiased flex flex-col min-h-screen selection:bg-brand-500 selection:text-white">
 
-        res.status(200).send(
-            'Webhook processed'
-        );
-    }
-);
+    <!-- High-Tech Navigation Bar -->
+    <nav class="fixed w-full z-[100] top-0 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+            <div class="flex items-center space-x-3 cursor-pointer group" onclick="navigate('home')">
+                <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center font-extrabold text-white text-xl shadow-lg shadow-brand-500/25 group-hover:scale-105 transition">W4</div>
+                <span class="text-xl font-extrabold tracking-tight text-white">WEB<span class="text-brand-500">4U</span></span>
+            </div>
+            <div class="hidden md:flex items-center space-x-8 text-sm font-medium text-zinc-400">
+                <button onclick="navigate('home')" class="hover:text-white transition">Home</button>
+                <button onclick="navigate('services')" class="hover:text-white transition">Services</button>
+                <button onclick="navigate('pricing')" class="hover:text-white transition">Pricing</button>
+                <button onclick="navigate('our-work')" class="hover:text-white transition">Our Work</button>
+                <button onclick="navigate('how-it-works')" class="hover:text-white transition">How It Works</button>
+                <button onclick="navigate('customer-care')" class="hover:text-white transition">Customer Care</button>
+                <button onclick="navigate('track-status')" class="hover:text-white transition">Track Status</button>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div id="auth-nav-container">
+                    <button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800">
+                        Sign In
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
 
-// --- Serve WEB4U Frontend ---
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
-});
+    <!-- Main Content Dynamic Viewport -->
+    <main id="app-main" class="flex-grow pt-20">
+        <!-- Injected views appear here -->
+    </main>
 
-// --- Start Server ---
-const PORT = process.env.PORT || 3000;
+    <!-- Footer -->
+    <footer class="border-t border-zinc-900 bg-zinc-950 py-16 px-4 sm:px-6 lg:px-8 mt-20">
+        <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
+            <div>
+                <div class="flex items-center space-x-3 mb-4">
+                    <div class="w-8 h-8 rounded-xl bg-brand-600 flex items-center justify-center font-bold text-white text-sm">W4</div>
+                    <span class="font-bold text-white text-lg">WEB4U</span>
+                </div>
+                <p class="text-sm text-zinc-400 leading-relaxed">Custom Websites. Built Around Your Needs. Professional planning, design, development and publishing.</p>
+            </div>
+            <div>
+                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Navigation</h4>
+                <ul class="space-y-2 text-sm text-zinc-400">
+                    <li><button onclick="navigate('services')" class="hover:text-white transition">Services</button></li>
+                    <li><button onclick="navigate('pricing')" class="hover:text-white transition">Pricing Plans</button></li>
+                    <li><button onclick="navigate('our-work')" class="hover:text-white transition">Our Portfolio</button></li>
+                    <li><button onclick="navigate('how-it-works')" class="hover:text-white transition">How It Works</button></li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Support & Trust</h4>
+                <ul class="space-y-2 text-sm text-zinc-400">
+                    <li><button onclick="navigate('customer-care')" class="hover:text-white transition">Customer Care & FAQ</button></li>
+                    <li><button onclick="navigate('track-status')" class="hover:text-white transition">Track Status</button></li>
+                    <li><button onclick="openAdminLoginModal()" class="text-brand-400 hover:text-brand-300 transition">Super Admin Portal</button></li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Secure Platform</h4>
+                <p class="text-xs text-zinc-500 leading-relaxed">Secured via Google OAuth and verified Cashfree checkout. Transparent one-time project pricing.</p>
+            </div>
+        </div>
+        <div class="max-w-7xl mx-auto pt-8 border-t border-zinc-900 flex flex-col sm:flex-row justify-between items-center text-xs text-zinc-500">
+            <p>© 2026 WEB4U. All rights reserved.</p>
+            <div class="flex space-x-6 mt-4 sm:mt-0">
+                <span>Privacy Protected</span>
+                <span>Secure Payments</span>
+            </div>
+        </div>
+    </footer>
 
-app.listen(PORT, () => {
-    console.log(
-        `WEB4U Production Backend running on port ${PORT}`
-    );
-});
+    <!-- Google Login Modal -->
+    <div id="login-modal" class="hidden fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+            <button onclick="closeLoginModal()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
+            <div class="text-center mb-8">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center font-bold text-white text-2xl mx-auto mb-4 shadow-lg shadow-brand-500/30">W4</div>
+                <h3 class="text-2xl font-bold text-white">Sign in to WEB4U</h3>
+                <p class="text-sm text-zinc-400 mt-2">Access your website requests, projects, and secure live tracking portal.</p>
+            </div>
+            <div class="space-y-4">
+                <a href="/api/auth/google" class="w-full py-3.5 px-4 rounded-xl bg-white text-zinc-900 font-semibold hover:bg-zinc-100 transition flex items-center justify-center space-x-3 shadow-md">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+                    <span>Continue with Google</span>
+                </a>
+                <button onclick="openAdminLoginModal()" class="w-full py-3 px-4 rounded-xl bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 text-xs font-medium hover:bg-zinc-800 transition">
+                    Super Admin Command Portal Login
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Super Admin Login Modal -->
+    <div id="admin-login-modal" class="hidden fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative border-red-500/20">
+            <button onclick="closeAdminLoginModal()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
+            <div class="text-center mb-8">
+                <div class="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-red-400 text-2xl mx-auto mb-4 shadow-lg">🔒</div>
+                <h3 class="text-2xl font-bold text-white">Super Admin Access</h3>
+                <p class="text-sm text-zinc-400 mt-2">Restricted operational command center login.</p>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase text-zinc-400 mb-1.5">Admin Email / Username</label>
+                    <input type="text" id="admin-email-input" value="admin@web4u.com" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500 transition">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase text-zinc-400 mb-1.5">Secure Password</label>
+                    <input type="password" id="admin-pass-input" value="admin123" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500 transition">
+                </div>
+                <button onclick="submitAdminLogin()" class="w-full py-3.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition shadow-lg shadow-red-600/30">
+                    Authenticate Admin Session
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Single Source of Truth Datasets ---
+        const servicesDB = [
+            { id: '1', title: 'Custom Website Design', desc: 'Professional website design created around your business, brand and requirements.', icon: '🎨', cat: 'Design' },
+            { id: '2', title: 'Responsive Website Development', desc: 'Websites designed to work smoothly across mobile, tablet and desktop devices.', icon: '📱', cat: 'Development' },
+            { id: '3', title: 'Business & Local Websites', desc: 'Professional websites for clinics, restaurants, salons, coaches and local businesses.', icon: '🏢', cat: 'Business' },
+            { id: '4', title: 'Website Content Structure', desc: 'We help organize your business information into clear pages and sections.', icon: '📑', cat: 'Design' },
+            { id: '5', title: 'Website Deployment', desc: 'Once approved, we prepare and publish your website through secure hosting and domains.', icon: '🚀', cat: 'Deployment' },
+            { id: '6', title: 'Website Support', desc: 'Additional website updates, maintenance and related support handled when required.', icon: '🛠️', cat: 'Support' }
+        ];
+
+        const pricingDB = [
+            { id: 'basic', name: 'BASIC WEBSITE', price: '₹4,999', desc: 'Suitable for straightforward website requirements and small local businesses.', highlights: ['Professional responsive design', 'Essential business pages', 'Contact information', 'Basic deployment support'] },
+            { id: 'moderate', name: 'MODERATE WEBSITE', price: '₹6,999', desc: 'For more detailed business websites requiring customized layouts and sections.', badge: 'Most Popular', highlights: ['Customized design', 'Additional website sections', 'Detailed content structure', 'Enhanced interactions'] },
+            { id: 'topend', name: 'TOP-END WEBSITE', price: '₹9,999', desc: 'Highly customized business websites with advanced visual presentation.', highlights: ['Highly customized design', 'Complex page structures', 'Advanced visual presentation', 'Supported integrations'] }
+        ];
+
+        const howItWorksDB = [
+            { num: '01', title: 'Tell Us What You Need', desc: 'Describe your website idea in simple words. No technical knowledge required.' },
+            { num: '02', title: 'We Review Your Requirements', desc: 'Our team reviews your submission and generates a unique Request ID.' },
+            { num: '03', title: 'Plan & Price Confirmed', desc: 'We recommend the best plan and confirm your final scope and timeline.' },
+            { num: '04', title: 'Approve & Pay', desc: 'Review your project details and complete secure payment via Cashfree.' },
+            { num: '05', title: 'We Build Your Website', desc: 'Development begins immediately according to your approved project scope.' },
+            { num: '06', title: 'Review & Request Changes', desc: 'Inspect your website preview and request any necessary adjustments.' },
+            { num: '07', title: 'Final Approval', desc: 'Approve the final version before we prepare for live publication.' },
+            { num: '08', title: 'Your Website Goes Live', desc: 'We publish your website and provide your live URL.' }
+        ];
+
+        const portfolioDB = [
+            { id: 'p1', title: 'Apex Care Clinic', category: 'Clinic', desc: 'Clean, professional medical practice website with appointment details and services.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Apex+Clinic' },
+            { id: 'p2', title: 'Trattoria Bella', category: 'Restaurant', desc: 'Warm, elegant restaurant site featuring interactive menus and gallery.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Trattoria+Bella' },
+            { id: 'p3', title: 'Elevate Elite Coaching', category: 'Coaching', desc: 'Conversion-focused personal brand coaching and program scheduling site.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Elevate+Coaching' },
+            { id: 'p4', title: 'Lumière Hair Salon', category: 'Salon', desc: 'Stylish booking-ready salon showcase with pricing and service catalogs.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Lumiere+Salon' }
+        ];
+
+        const faqDB = [
+            { cat: 'General', q: 'What is WEB4U?', a: 'WEB4U is a custom website service where you tell us what you need and we build a website around your requirements.' },
+            { cat: 'Requests', q: 'How do I request a website?', a: 'Use the request box on WEB4U, describe what you need and submit your requirements. You may log in with Google.' },
+            { cat: 'Pricing', q: 'How much does a website cost?', a: 'WEB4U offers Basic, Moderate and Top-End plans priced at ₹4,999, ₹6,999 and ₹9,999 respectively (one-time payment).' },
+            { cat: 'Payments', q: 'When do I pay?', a: 'Payment becomes available after your requirements have been reviewed and you approve the project details.' }
+        ];
+
+        // --- Application State ---
+        let appState = {
+            user: null,
+            currentView: 'home',
+            currentProjectId: null,
+            pendingRequirements: null
+        };
+
+        // --- REST API Client ---
+        const api = {
+            async req(endpoint, method = 'GET', body = null) {
+                const options = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
+                if (body) options.body = JSON.stringify(body);
+                const res = await fetch('/api' + endpoint, options);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'API Error');
+                return data;
+            }
+        };
+
+        // --- Router & Navigation Controller ---
+        async function navigate(viewId, param = null) {
+            appState.currentView = viewId;
+            appState.currentProjectId = param;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            renderView();
+            updateNavbarAuth();
+        }
+
+        async function updateNavbarAuth() {
+            try {
+                appState.user = await api.req('/auth/me');
+            } catch (e) {
+                appState.user = null;
+            }
+
+            const container = document.getElementById('auth-nav-container');
+            if (appState.user) {
+                const isAdmin = appState.user.role === 'SUPER_ADMIN';
+                container.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        ${isAdmin ? `<button onclick="navigate('admin-dashboard')" class="px-3.5 py-2 rounded-xl bg-red-600/20 border border-red-500/50 text-red-400 font-bold text-xs shadow-lg shadow-red-500/10">Admin Panel</button>` : ''}
+                        <button onclick="navigate('my-websites')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>
+                        <button onclick="logout()" class="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm hover:text-white transition">Logout</button>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800">
+                        Sign In
+                    </button>
+                `;
+            }
+        }
+
+        function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
+        function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+        function openAdminLoginModal() { 
+            closeLoginModal();
+            document.getElementById('admin-login-modal').classList.remove('hidden'); 
+        }
+        function closeAdminLoginModal() { document.getElementById('admin-login-modal').classList.add('hidden'); }
+
+        async function submitAdminLogin() {
+            const email = document.getElementById('admin-email-input').value;
+            const password = document.getElementById('admin-pass-input').value;
+            try {
+                const res = await api.req('/auth/admin-login', 'POST', { email, password });
+                appState.user = res.user;
+                closeAdminLoginModal();
+                updateNavbarAuth();
+                navigate('admin-dashboard');
+            } catch (e) {
+                alert('Invalid admin credentials. Use admin@web4u.com / admin123');
+            }
+        }
+
+        async function logout() {
+            try {
+                await api.req('/auth/logout', 'POST');
+                appState.user = null;
+                updateNavbarAuth();
+                navigate('home');
+            } catch (e) {}
+        }
+
+        // --- Master View Renderer ---
+        function renderView() {
+            const main = document.getElementById('app-main');
+            if (appState.currentView === 'home') main.innerHTML = renderHomeView();
+            else if (appState.currentView === 'services') main.innerHTML = renderServicesView();
+            else if (appState.currentView === 'pricing') main.innerHTML = renderPricingView();
+            else if (appState.currentView === 'our-work') main.innerHTML = renderOurWorkView();
+            else if (appState.currentView === 'how-it-works') main.innerHTML = renderHowItWorksView();
+            else if (appState.currentView === 'customer-care') main.innerHTML = renderCustomerCareView();
+            else if (appState.currentView === 'track-status') main.innerHTML = renderTrackStatusView();
+            else if (appState.currentView === 'my-websites') renderMyWebsitesViewAsync(main);
+            else if (appState.currentView === 'project-detail') renderProjectDetailViewAsync(main, appState.currentProjectId);
+            else if (appState.currentView === 'admin-dashboard') renderAdminDashboardAsync(main);
+            else main.innerHTML = renderHomeView();
+        }
+
+        // --- High-Tech UI View Generators ---
+        function renderHomeView() {
+            return `
+                <section class="relative py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto text-center">
+                    <div class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-brand-600/10 border border-brand-500/20 text-brand-400 text-xs font-semibold uppercase tracking-wider mb-8 glow-effect">
+                        <span>Custom Website Development Platform</span>
+                    </div>
+                    <h1 class="text-4xl sm:text-7xl font-extrabold text-white tracking-tight max-w-5xl mx-auto leading-tight">
+                        Custom Websites. <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-500 via-indigo-300 to-purple-400">Built Around Your Needs.</span>
+                    </h1>
+                    <p class="mt-6 text-lg sm:text-xl text-zinc-400 max-w-3xl mx-auto font-light leading-relaxed">
+                        Tell us what you need in simple words. We plan, design, and build a professional website tailored precisely to your business requirements.
+                    </p>
+
+                    <div class="mt-12 max-w-3xl mx-auto glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl text-left">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-3">Describe Your Website Requirements</label>
+                        <textarea id="hero-req-input" rows="4" class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-brand-500 transition resize-none" placeholder="e.g. I need a modern website for my dental clinic with service listings, doctor profiles, and an appointment booking contact form..."></textarea>
+                        <div class="mt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <span class="text-xs text-zinc-500">No technical knowledge required. We review every requirement.</span>
+                            <button onclick="submitWebsiteRequestFromHero()" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg shadow-brand-600/30">
+                                Submit Website Request →
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            `;
+        }
+
+        function renderServicesView() {
+            return `
+                <div class="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="text-center max-w-3xl mx-auto mb-16">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500">OUR SERVICES</span>
+                        <h1 class="text-4xl font-extrabold text-white mt-2">Custom Websites. Built Around Your Needs.</h1>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${servicesDB.map((s, idx) => `
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between">
+                                <div><span class="text-4xl mb-4 block">${s.icon}</span><h3 class="text-xl font-bold text-white mb-3">${s.title}</h3><p class="text-sm text-zinc-400">${s.desc}</p></div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPricingView() {
+            return `
+                <div class="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="text-center max-w-3xl mx-auto mb-16">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500">PRICING</span>
+                        <h1 class="text-4xl font-extrabold text-white mt-2">Choose the Right Website Level</h1>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        ${pricingDB.map(p => `
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between relative">
+                                <div><h3 class="text-lg font-bold text-white mb-2">${p.name}</h3><div class="text-4xl font-extrabold text-white mb-6">${p.price}</div><ul class="space-y-3 mb-8">${p.highlights.map(h => `<li class="text-sm text-zinc-300">✓ ${h}</li>`).join('')}</ul></div>
+                                <button onclick="navigate('home')" class="w-full py-3.5 rounded-xl bg-zinc-800 hover:bg-brand-600 text-white font-semibold text-sm transition">Select Plan</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderOurWorkView() { return `<div class="py-20 text-center text-zinc-400">Portfolio View Loaded</div>`; }
+        function renderHowItWorksView() { return `<div class="py-20 text-center text-zinc-400">How It Works View Loaded</div>`; }
+        function renderCustomerCareView() { return `<div class="py-20 text-center text-zinc-400">Customer Care View Loaded</div>`; }
+        function renderTrackStatusView() { return `<div class="py-20 text-center text-zinc-400">Track Status View Loaded</div>`; }
+
+        async function renderMyWebsitesViewAsync(container) {
+            try {
+                const projects = await api.req('/customer/projects');
+                if (!projects.length) {
+                    container.innerHTML = `<div class="py-24 text-center"><h2 class="text-2xl font-bold text-white mb-4">No Projects Yet</h2><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Request Website</button></div>`;
+                    return;
+                }
+                container.innerHTML = `<div class="py-20 max-w-7xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-8">Your Websites</h1><div class="grid grid-cols-1 md:grid-cols-2 gap-6">${projects.map(p => `<div class="glass-panel p-6 rounded-3xl"><span class="text-xs font-mono text-brand-400">${p.request_id}</span><h3 class="text-xl font-bold text-white mt-1 mb-4">${p.website_name}</h3><button onclick="navigate('project-detail', ${p.id})" class="px-4 py-2 bg-zinc-800 text-white rounded-xl text-sm font-semibold">Open Workspace</button></div>`).join('')}</div></div>`;
+            } catch (e) {
+                container.innerHTML = `<div class="py-20 text-center text-red-400">Please sign in to view your websites.</div>`;
+            }
+        }
+
+        async function renderProjectDetailViewAsync(container, projectId) {
+            try {
+                const p = await api.req(`/customer/projects/${projectId}`);
+                container.innerHTML = `<div class="py-20 max-w-5xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-4">${p.website_name}</h1><p class="text-zinc-400 mb-6">Status: <span class="text-white font-bold">${p.status}</span></p><div class="glass-panel p-6 rounded-3xl"><h3 class="text-lg font-bold text-white mb-2">Original Requirements</h3><p class="text-sm text-zinc-300">${p.original_requirements}</p></div></div>`;
+            } catch (e) {
+                container.innerHTML = `<div class="py-20 text-center text-red-400">Failed to load project workspace.</div>`;
+            }
+        }
+
+        async function renderAdminDashboardAsync(container) {
+            try {
+                const projects = await api.req('/admin/projects');
+                container.innerHTML = `<div class="py-20 max-w-7xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-8">Super Admin Command Center</h1><div class="glass-panel rounded-3xl overflow-hidden"><table class="w-full text-left"><thead><tr class="border-b border-zinc-800 text-xs text-zinc-400 uppercase bg-zinc-950/50"><th class="p-4">Req ID</th><th class="p-4">Customer</th><th class="p-4">Website</th><th class="p-4">Status</th></tr></thead><tbody class="divide-y divide-zinc-800 text-sm">${projects.map(pr => `<tr class="hover:bg-zinc-800/30"><td class="p-4 font-mono text-brand-400">${pr.request_id}</td><td class="p-4 text-white">${pr.customer_name}</td><td class="p-4 text-zinc-300">${pr.website_name}</td><td class="p-4 text-zinc-300">${pr.status}</td></tr>`).join('')}</tbody></table></div></div>`;
+            } catch (e) {
+                container.innerHTML = `<div class="py-20 text-center text-red-400">Admin authorization required.</div>`;
+            }
+        }
+
+        async function submitWebsiteRequestFromHero() {
+            const reqs = document.getElementById('hero-req-input').value;
+            if (!reqs.trim()) return alert('Please enter requirements.');
+            try {
+                await api.req('/projects', 'POST', { requirements: reqs });
+                alert('Website request submitted successfully!');
+                navigate('my-websites');
+            } catch (e) {
+                alert('Please sign in first.');
+                openLoginModal();
+            }
+        }
+
+        window.onload = () => { updateNavbarAuth(); renderView(); };
+    </script>
+</body>
+</html>
