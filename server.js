@@ -12,6 +12,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const app = express();
 
 app.use(express.json());
+app.set('trust proxy', 1);
 app.use(cors({ origin: true, credentials: true }));
 
 // ============================================================
@@ -24,7 +25,7 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000
     }
 }));
