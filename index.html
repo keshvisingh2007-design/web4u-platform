@@ -291,7 +291,7 @@
             else if (appState.currentView === 'our-work') main.innerHTML = renderOurWorkView();
             else if (appState.currentView === 'how-it-works') main.innerHTML = renderHowItWorksView();
             else if (appState.currentView === 'customer-care') main.innerHTML = renderCustomerCareView();
-            else if (appState.currentView === 'track-status') main.innerHTML = renderTrackStatusView();
+            else if (appState.currentView === 'track-status') renderTrackStatusView();
             else if (appState.currentView === 'my-websites') renderMyWebsitesViewAsync(main);
             else if (appState.currentView === 'project-detail') renderProjectDetailViewAsync(main, appState.currentProjectId);
             else if (appState.currentView === 'admin-dashboard') renderAdminDashboardAsync(main);
@@ -366,8 +366,248 @@
         function renderOurWorkView() { return `<div class="py-20 text-center text-zinc-400">Portfolio View Loaded</div>`; }
         function renderHowItWorksView() { return `<div class="py-20 text-center text-zinc-400">How It Works View Loaded</div>`; }
         function renderCustomerCareView() { return `<div class="py-20 text-center text-zinc-400">Customer Care View Loaded</div>`; }
-        function renderTrackStatusView() { return `<div class="py-20 text-center text-zinc-400">Track Status View Loaded</div>`; }
+ async function renderTrackStatusView() {
+    const container = document.getElementById('app-main');
 
+    container.innerHTML = `
+        <div class="py-20 max-w-5xl mx-auto px-4">
+            <div class="text-center mb-12">
+                <span class="text-xs font-bold uppercase tracking-widest text-brand-500">
+                    PROJECT TRACKING
+                </span>
+                <h1 class="text-4xl font-extrabold text-white mt-2">
+                    Track Your Website
+                </h1>
+                <p class="text-zinc-400 mt-3">
+                    Follow your website request from submission to launch.
+                </p>
+            </div>
+
+            <div id="track-status-content">
+                <div class="text-center text-zinc-500 py-12">
+                    Loading your project...
+                </div>
+            </div>
+        </div>
+    `;
+
+    try {
+        const projects = await api.req('/customer/projects');
+
+        if (!projects || !projects.length) {
+            document.getElementById('track-status-content').innerHTML = `
+                <div class="glass-panel rounded-3xl p-10 text-center">
+                    <div class="text-4xl mb-4">📋</div>
+                    <h2 class="text-2xl font-bold text-white mb-3">
+                        No Website Request Yet
+                    </h2>
+                    <p class="text-zinc-400 mb-6">
+                        Submit a website request to start tracking your project.
+                    </p>
+                    <button
+                        onclick="navigate('home')"
+                        class="px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold">
+                        Request a Website
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        const project = projects[0];
+
+        const status = String(project.status || 'REQUESTED').toUpperCase();
+
+        const steps = [
+            {
+                key: 'REQUESTED',
+                title: 'Request Submitted',
+                description: 'Your website requirements have been received.'
+            },
+            {
+                key: 'UNDER REVIEW',
+                title: 'Under Review',
+                description: 'Our team is reviewing your requirements.'
+            },
+            {
+                key: 'SCOPE CONFIRMED',
+                title: 'Scope & Pricing',
+                description: 'Project scope and pricing are being finalized.'
+            },
+            {
+                key: 'PAYMENT PENDING',
+                title: 'Payment',
+                description: 'Payment is required before development begins.'
+            },
+            {
+                key: 'IN DEVELOPMENT',
+                title: 'Development',
+                description: 'Your website is being built.'
+            },
+            {
+                key: 'PREVIEW',
+                title: 'Preview & Review',
+                description: 'Your website preview is ready for review.'
+            },
+            {
+                key: 'LIVE',
+                title: 'Website Live',
+                description: 'Your website has been published.'
+            }
+        ];
+
+        let currentIndex = steps.findIndex(step =>
+            status.includes(step.key)
+        );
+
+        if (currentIndex === -1) {
+            currentIndex = 0;
+        }
+
+        document.getElementById('track-status-content').innerHTML = `
+            <div class="glass-panel rounded-3xl p-6 sm:p-8 mb-8">
+
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+
+                    <div>
+                        <p class="text-xs uppercase tracking-widest text-zinc-500">
+                            Request ID
+                        </p>
+
+                        <p class="font-mono text-brand-400 text-lg mt-1">
+                            ${project.request_id || 'N/A'}
+                        </p>
+                    </div>
+
+                    <div class="px-4 py-2 rounded-xl bg-brand-600/10 border border-brand-500/30">
+                        <span class="text-xs text-brand-300 uppercase tracking-wider">
+                            Current Status
+                        </span>
+                        <div class="text-white font-bold mt-1">
+                            ${status}
+                        </div>
+                    </div>
+
+                </div>
+
+                <h2 class="text-2xl font-bold text-white mb-8">
+                    ${project.website_name || 'Your Website'}
+                </h2>
+
+                <div class="space-y-6">
+
+                    ${steps.map((step, index) => {
+
+                        const completed = index < currentIndex;
+                        const current = index === currentIndex;
+
+                        return `
+                            <div class="flex gap-4">
+
+                                <div class="flex flex-col items-center">
+
+                                    <div class="
+                                        w-9 h-9 rounded-full
+                                        flex items-center justify-center
+                                        font-bold text-sm
+                                        ${
+                                            completed
+                                                ? 'bg-green-500 text-white'
+                                                : current
+                                                ? 'bg-brand-600 text-white ring-4 ring-brand-500/20'
+                                                : 'bg-zinc-800 text-zinc-500 border border-zinc-700'
+                                        }
+                                    ">
+                                        ${completed ? '✓' : index + 1}
+                                    </div>
+
+                                    ${
+                                        index < steps.length - 1
+                                            ? `<div class="w-px h-12 ${
+                                                completed
+                                                    ? 'bg-green-500'
+                                                    : 'bg-zinc-800'
+                                              }"></div>`
+                                            : ''
+                                    }
+
+                                </div>
+
+                                <div class="pb-4">
+
+                                    <h3 class="${
+                                        completed || current
+                                            ? 'text-white'
+                                            : 'text-zinc-500'
+                                    } font-semibold">
+
+                                        ${step.title}
+
+                                        ${
+                                            current
+                                                ? `<span class="ml-2 text-xs text-brand-400">
+                                                    CURRENT
+                                                   </span>`
+                                                : ''
+                                        }
+
+                                    </h3>
+
+                                    <p class="text-sm text-zinc-500 mt-1">
+                                        ${step.description}
+                                    </p>
+
+                                </div>
+
+                            </div>
+                        `;
+
+                    }).join('')}
+
+                </div>
+
+                <div class="mt-8 pt-6 border-t border-zinc-800">
+
+                    <button
+                        onclick="navigate('project-detail', ${project.id})"
+                        class="px-5 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-semibold">
+
+                        Open Project Workspace →
+
+                    </button>
+
+                </div>
+
+            </div>
+        `;
+
+    } catch (e) {
+
+        document.getElementById('track-status-content').innerHTML = `
+            <div class="glass-panel rounded-3xl p-10 text-center">
+
+                <div class="text-4xl mb-4">🔐</div>
+
+                <h2 class="text-2xl font-bold text-white mb-3">
+                    Sign In Required
+                </h2>
+
+                <p class="text-zinc-400 mb-6">
+                    Please sign in with Google to view your project status.
+                </p>
+
+                <button
+                    onclick="openLoginModal()"
+                    class="px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold">
+
+                    Sign In with Google
+
+                </button>
+
+            </div>
+        `;
+    }
+}
         async function renderMyWebsitesViewAsync(container) {
             try {
                 const projects = await api.req('/customer/projects');
