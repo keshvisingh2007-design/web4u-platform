@@ -1,20 +1,22 @@
 {
-  "name": "web4u-platform",
-  "version": "1.0.0",
-  "description": "Web4U website platform backend",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "bcryptjs": "^3.0.2",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "express-session": "^1.18.2",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "pg": "^8.16.3",
-    "sqlite3": "^5.1.7"
-  }
+"name": "web4u-platform",
+"version": "1.0.0",
+"description": "Web4U website platform backend",
+"main": "server.js",
+"scripts": {
+"start": "node server.js"
+},
+"dependencies": {
+"bcryptjs": "^3.0.2",
+"cors": "^2.8.5",
+"dotenv": "^17.2.1",
+"express": "^5.1.0",
+"express-rate-limit": "^7.5.0",
+"express-session": "^1.18.2",
+"helmet": "^8.0.0",
+"passport": "^0.7.0",
+"passport-google-oauth20": "^2.0.0",
+"pg": "^8.16.3",
+"sqlite3": "^5.1.7"
+}
 }
