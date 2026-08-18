@@ -1,4 +1,4 @@
-const express = require('express');
+ const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
@@ -7,6 +7,8 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +28,7 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname)));
@@ -185,7 +188,6 @@ app.post('/api/auth/admin-login', adminLoginLimiter, async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        // Constant-time check comparison
         const emailMatch = (email.trim().toLowerCase() === adminEmail.trim().toLowerCase());
         const passwordMatch = await bcrypt.compare(password, adminPasswordHash);
 
@@ -194,7 +196,6 @@ app.post('/api/auth/admin-login', adminLoginLimiter, async (req, res) => {
                 if (err) return res.status(500).json({ error: 'Internal server error' });
 
                 const completeLogin = (userObj) => {
-                    // Regenerate session to prevent session fixation attacks
                     req.session.regenerate((err) => {
                         if (err) return res.status(500).json({ error: 'Internal server error' });
                         req.login(userObj, (err) => {
@@ -282,7 +283,6 @@ app.get('/api/admin/projects', isSuperAdmin, (req, res) => {
     });
 });
 
-// Global Error Handler Guardrail (Prevents stack trace leaks)
 app.use((err, req, res, next) => {
     console.error('Unhandled Server Error:', err.message);
     res.status(500).json({ error: 'An unexpected internal error occurred.' });
