@@ -1,9 +1,8 @@
- const express = require('express');
+const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -13,101 +12,98 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Render deployment reverse proxy trust configuration for secure cookies
+// Trust proxy for secure cookies on Render
 app.set('trust proxy', 1);
 
-// Security check for session secret in production
-if (!process.env.SESSION_SECRET) {
-    console.error('CRITICAL ERROR: SESSION_SECRET environment variable is missing.');
-    process.exit(1);
-}
-
-// Helmet security headers configured safely for single-file frontend integration
+// Middleware
 app.use(helmet({
     contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false
 }));
-
-app.use(cors());
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname)));
 
-const sessionMiddleware = session({
-    secret: process.env.SESSION_SECRET,
+// Session Configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'web4u-super-secret-key-2026',
     resave: false,
     saveUninitialized: false,
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
-});
+}));
 
-app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Rate limiter specifically for admin login to prevent brute force attacks (5 requests per 15 minutes)
-const adminLoginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 5,
-    message: { error: 'Too many login attempts. Please try again later.' },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-const dbPath = path.resolve(__dirname, 'database.sqlite');
-const db = new sqlite3.Database(dbPath, (err) => {
+// SQLite Database Setup
+const db = new sqlite3.Database('./database.sqlite', (err) => {
     if (err) {
-        console.error('Database connection error:', err.message);
+        console.error('Error opening database', err.message);
     } else {
         console.log('Connected to SQLite database.');
+        initDb();
     }
 });
 
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        google_id TEXT UNIQUE,
-        email TEXT,
-        name TEXT,
-        role TEXT DEFAULT 'CUSTOMER'
-    )`);
+function initDb() {
+    db.serialize(() => {
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            google_id TEXT UNIQUE,
+            email TEXT UNIQUE,
+            name TEXT,
+            role TEXT DEFAULT 'CUSTOMER',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        request_id TEXT UNIQUE,
-        website_name TEXT,
-        original_requirements TEXT,
-        status TEXT DEFAULT 'REQUESTED',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )`);
-});
+        db.run(`CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            website_name TEXT,
+            requirements TEXT,
+            status TEXT DEFAULT 'IN DEVELOPMENT',
+            payment_status TEXT DEFAULT 'Pending',
+            preview_url TEXT,
+            live_url TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )`);
+    });
+}
 
+// Passport Google Strategy
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     passport.use(new GoogleStrategy({
         clientID: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback'
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://web4u-platform.onrender.com/api/auth/google/callback'
     }, (accessToken, refreshToken, profile, done) => {
-        const email = profile.emails && profile.emails[0] ? profile.emails[0].value : '';
-        const name = profile.displayName || 'Customer';
+        const email = profile.emails && profile.emails[0] ? profile.emails[0].value : null;
+        const name = profile.displayName || 'Google User';
         const googleId = profile.id;
 
-        db.get('SELECT * FROM users WHERE google_id = ?', [googleId], (err, user) => {
+        db.get(`SELECT * FROM users WHERE google_id = ? OR email = ?`, [googleId, email], (err, user) => {
             if (err) return done(err);
+
             if (user) {
+                if (!user.google_id) {
+                    db.run(`UPDATE users SET google_id = ? WHERE id = ?`, [googleId, user.id]);
+                }
                 return done(null, user);
             } else {
-                db.run('INSERT INTO users (google_id, email, name, role) VALUES (?, ?, ?, ?)',
-                    [googleId, email, name, 'CUSTOMER'], function(err) {
+                db.run(`INSERT INTO users (google_id, email, name, role) VALUES (?, ?, ?, 'CUSTOMER')`, 
+                    [googleId, email, name], function(err) {
                         if (err) return done(err);
-                        db.get('SELECT * FROM users WHERE id = ?', [this.lastID], (err, newUser) => {
-                            return done(err, newUser);
+                        db.get(`SELECT * FROM users WHERE id = ?`, [this.lastID], (err, newUser) => {
+                            if (err) return done(err);
+                            return done(null, newUser);
                         });
                     });
             }
@@ -116,33 +112,29 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
 }
 
 passport.serializeUser((user, done) => {
-    done(null, { id: user.id, role: user.role });
+    done(null, user.id);
 });
 
-passport.deserializeUser((obj, done) => {
-    db.get('SELECT * FROM users WHERE id = ?', [obj.id], (err, user) => {
-        if (err || !user) return done(err, null);
-        done(null, user);
+passport.deserializeUser((id, done) => {
+    db.get(`SELECT * FROM users WHERE id = ?`, [id], (err, user) => {
+        done(err, user);
     });
 });
 
-function isAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) return next();
-    res.status(401).json({ error: 'Authentication required' });
-}
+// Rate limiting for auth routes
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 
-function isSuperAdmin(req, res, next) {
-    if (req.isAuthenticated() && req.user && req.user.role === 'SUPER_ADMIN') {
-        return next();
-    }
-    res.status(403).json({ error: 'Admin authorization required' });
-}
+// --- API ROUTES ---
 
-app.get('/api/auth/google',
-    passport.authenticate('google', { scope: ['profile', 'email'] })
-);
+// Auth Routes
+app.get('/api/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-app.get('/api/auth/google/callback',
+app.get('/api/auth/google/callback', 
     passport.authenticate('google', { failureRedirect: '/' }),
     (req, res) => {
         res.redirect('/');
@@ -150,16 +142,10 @@ app.get('/api/auth/google/callback',
 );
 
 app.get('/api/auth/me', (req, res) => {
-    if (req.isAuthenticated()) {
-        res.json({
-            id: req.user.id,
-            email: req.user.email,
-            name: req.user.name,
-            role: req.user.role
-        });
-    } else {
-        res.status(401).json({ error: 'Not authenticated' });
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ error: 'Not authenticated' });
     }
+    res.json(req.user);
 });
 
 app.post('/api/auth/logout', (req, res, next) => {
@@ -172,122 +158,150 @@ app.post('/api/auth/logout', (req, res, next) => {
     });
 });
 
-app.post('/api/auth/admin-login', adminLoginLimiter, async (req, res) => {
+// Admin Login Route with Diagnostic Logging
+app.post('/api/auth/admin-login', authLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        console.log({
+            adminEmailConfigured: Boolean(process.env.ADMIN_EMAIL),
+            adminPasswordHashConfigured: Boolean(process.env.ADMIN_PASSWORD_HASH),
+            hashLength: process.env.ADMIN_PASSWORD_HASH ? process.env.ADMIN_PASSWORD_HASH.length : 0,
+            bcryptPrefixValid: /^\$2[aby]\$/.test(process.env.ADMIN_PASSWORD_HASH || ''),
+            submittedEmailMatches: Boolean(email) && Boolean(process.env.ADMIN_EMAIL) && email.trim().toLowerCase() === process.env.ADMIN_EMAIL.trim().toLowerCase()
+        });
+
         if (!email || !password) {
-            return res.status(401).json({ error: 'Invalid credentials' });
+            return res.status(400).json({ error: 'Email and password are required' });
         }
 
         const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        const adminHash = process.env.ADMIN_PASSWORD_HASH;
 
-        if (!adminEmail || !adminPasswordHash) {
-            console.error('CRITICAL ERROR: Admin environment variables are not configured.');
-            return res.status(401).json({ error: 'Invalid credentials' });
+        if (!adminEmail || !adminHash) {
+            return res.status(500).json({ error: 'Admin credentials not configured on server' });
         }
 
-        const emailMatch = (email.trim().toLowerCase() === adminEmail.trim().toLowerCase());
-        const passwordMatch = await bcrypt.compare(password, adminPasswordHash);
+        const emailMatch = email.trim().toLowerCase() === adminEmail.trim().toLowerCase();
+        const passwordMatch = await bcrypt.compare(password, adminHash);
 
-        if (emailMatch && passwordMatch) {
-            db.get('SELECT * FROM users WHERE email = ? AND role = ?', [adminEmail, 'SUPER_ADMIN'], async (err, adminUser) => {
-                if (err) return res.status(500).json({ error: 'Internal server error' });
+        console.log({
+            passwordHashMatch: passwordMatch
+        });
 
-                const completeLogin = (userObj) => {
-                    req.session.regenerate((err) => {
-                        if (err) return res.status(500).json({ error: 'Internal server error' });
-                        req.login(userObj, (err) => {
-                            if (err) return res.status(500).json({ error: 'Internal server error' });
-                            return res.json({
-                                success: true,
-                                user: {
-                                    id: userObj.id,
-                                    email: userObj.email,
-                                    name: userObj.name,
-                                    role: userObj.role
-                                }
+        if (!emailMatch || !passwordMatch) {
+            return res.status(401).json({ error: 'Invalid admin credentials' });
+        }
+
+        // Check SQLite for SUPER_ADMIN user
+        db.get(`SELECT * FROM users WHERE email = ? AND role = 'SUPER_ADMIN'`, [adminEmail], (err, adminUser) => {
+            if (err) {
+                console.error('Database error during admin lookup:', err);
+                return res.status(500).json({ error: 'Internal server error' });
+            }
+
+            if (adminUser) {
+                req.login(adminUser, (err) => {
+                    if (err) return res.status(500).json({ error: 'Login session error' });
+                    return res.json({ success: true, user: adminUser });
+                });
+            } else {
+                db.run(`INSERT INTO users (email, name, role) VALUES (?, 'Super Admin', 'SUPER_ADMIN')`, 
+                    [adminEmail], function(err) {
+                        if (err) {
+                            console.error('Database error during admin creation:', err);
+                            return res.status(500).json({ error: 'Internal server error' });
+                        }
+                        db.get(`SELECT * FROM users WHERE id = ?`, [this.lastID], (err, newAdminUser) => {
+                            if (err || !newAdminUser) {
+                                return res.status(500).json({ error: 'Internal server error' });
+                            }
+                            req.login(newAdminUser, (err) => {
+                                if (err) return res.status(500).json({ error: 'Login session error' });
+                                return res.json({ success: true, user: newAdminUser });
                             });
                         });
                     });
-                };
+            }
+        });
 
-                if (!adminUser) {
-                    db.run('INSERT INTO users (email, name, role) VALUES (?, ?, ?)',
-                        [adminEmail, 'Super Admin', 'SUPER_ADMIN'], function(err) {
-                            if (err) return res.status(500).json({ error: 'Internal server error' });
-                            db.get('SELECT * FROM users WHERE id = ?', [this.lastID], (err, newUser) => {
-                                if (err || !newUser) return res.status(500).json({ error: 'Internal server error' });
-                                completeLogin(newUser);
-                            });
-                        });
-                } else {
-                    completeLogin(adminUser);
-                }
-            });
-        } else {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-    } catch (e) {
-        return res.status(500).json({ error: 'Internal server error' });
+    } catch (error) {
+        console.error('Admin login error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-app.post('/api/projects', isAuthenticated, (req, res) => {
+// Project Routes (Customer)
+app.post('/api/projects', (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
     const { requirements } = req.body;
-    if (!requirements || !requirements.trim()) {
+    if (!requirements) {
         return res.status(400).json({ error: 'Requirements are required' });
     }
 
     const userId = req.user.id;
-    const requestId = 'W4-' + Math.floor(100000 + Math.random() * 900000);
-    const websiteName = 'Custom Website ' + requestId;
+    const websiteName = requirements.split('\n')[0].substring(0, 50) || 'Custom Website';
 
-    db.run('INSERT INTO projects (user_id, request_id, website_name, original_requirements, status) VALUES (?, ?, ?, ?, ?)',
-        [userId, requestId, websiteName, requirements, 'REQUESTED'], function(err) {
-            if (err) return res.status(500).json({ error: 'Failed to create project' });
-            res.json({ success: true, projectId: this.lastID, request_id: requestId });
+    db.run(`INSERT INTO projects (user_id, website_name, requirements, status, payment_status) VALUES (?, ?, ?, 'IN DEVELOPMENT', 'Pending')`,
+        [userId, websiteName, requirements], function(err) {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to create project' });
+            }
+            res.json({ success: true, projectId: this.lastID });
         });
 });
 
-app.get('/api/customer/projects', isAuthenticated, (req, res) => {
+app.get('/api/customer/projects', (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
     const userId = req.user.id;
-    db.all('SELECT * FROM projects WHERE user_id = ? ORDER BY id DESC', [userId], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'Failed to retrieve projects' });
+    db.all(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC`, [userId], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch projects' });
+        }
         res.json(rows);
     });
 });
 
-app.get('/api/customer/projects/:id', isAuthenticated, (req, res) => {
-    const userId = req.user.id;
-    const projectId = req.params.id;
+// Admin Projects Route
+app.get('/api/admin/projects', (req, res) => {
+    if (!req.isAuthenticated() || req.user.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Unauthorized access' });
+    }
 
-    db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId], (err, project) => {
-        if (err) return res.status(500).json({ error: 'Database error' });
-        if (!project) return res.status(404).json({ error: 'Project not found or unauthorized' });
-        res.json(project);
-    });
-});
-
-app.get('/api/admin/projects', isSuperAdmin, (req, res) => {
     const query = `
         SELECT p.*, u.name as customer_name, u.email as customer_email 
         FROM projects p 
         LEFT JOIN users u ON p.user_id = u.id 
-        ORDER BY p.id DESC
+        ORDER BY p.created_at DESC
     `;
+
     db.all(query, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'Failed to fetch admin projects' });
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch admin projects' });
+        }
         res.json(rows);
     });
 });
 
-app.use((err, req, res, next) => {
-    console.error('Unhandled Server Error:', err.message);
-    res.status(500).json({ error: 'An unexpected internal error occurred.' });
+// Portfolio Endpoint fallback
+app.get('/api/portfolio', (req, res) => {
+    res.json([
+        { title: 'Tech Startup Dashboard', category: 'Web App', description: 'Advanced responsive dashboard built for an AI analytics company.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Dashboard+UI' },
+        { title: 'Local Coffee Roaster', category: 'E-Commerce', description: 'Clean, modern storefront with integrated local delivery zones.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' }
+    ]);
+});
+
+// Serve frontend index.html for all other routes
+app.get('*', (req, res) => {
+    res.sendFile(__dirname + '/index.html');
 });
 
 app.listen(PORT, () => {
-    console.log(`WEB4U Secure Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
