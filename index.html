@@ -6,6 +6,7 @@
     <title>WEB4U — Custom Websites. Built Around Your Needs.</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
         tailwind.config = {
@@ -180,6 +181,38 @@
         </div>
     </div>
 
+    <!-- Admin Manage Project Modal -->
+    <div id="admin-manage-modal" class="hidden fixed inset-0 z-[300] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative border border-zinc-800">
+            <button onclick="closeAdminManageModal()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-xl p-2"><i class="fa-solid fa-xmark"></i></button>
+            <div id="admin-manage-content" class="space-y-6">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Chat Modal -->
+    <div id="customer-chat-modal" class="hidden fixed inset-0 z-[300] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-2xl w-full h-[85vh] flex flex-col shadow-2xl relative border border-zinc-800 overflow-hidden">
+            <div class="p-4 md:p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+                <div>
+                    <h3 id="customer-chat-title" class="text-lg font-bold text-white">Project Chat</h3>
+                    <p class="text-xs text-zinc-400">Communicate directly with your project administrator.</p>
+                </div>
+                <button onclick="closeCustomerChatModal()" class="text-zinc-400 hover:text-white text-xl p-2"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="customer-chat-messages" class="flex-grow p-4 md:p-6 overflow-y-auto space-y-4 text-sm">
+                <!-- Messages populated dynamically -->
+            </div>
+            <div class="p-4 border-t border-zinc-800 bg-zinc-900/50">
+                <form onsubmit="sendCustomerMessage(event)" class="flex space-x-2">
+                    <input type="text" id="customer-chat-input" placeholder="Type a message..." required maxlength="3000" class="flex-grow bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-brand-500 transition">
+                    <button type="submit" class="px-6 py-3 bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm rounded-xl transition shadow-md active:scale-95">Send</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Data Sources
         const pricingDB = [
@@ -223,6 +256,7 @@
         ];
 
         let appState = { user: null, currentView: 'home', currentProjectId: null };
+        let chatPollInterval = null;
 
         // REAL API CLIENT
         const api = {
@@ -302,6 +336,7 @@
         // Router & View Management
         async function navigate(viewId, param = null) {
             cleanupPreviewEngine();
+            stopChatPolling();
             appState.currentView = viewId;
             appState.currentProjectId = param;
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -309,7 +344,6 @@
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-white'));
             document.querySelectorAll(`.nav-link[onclick="navigate('${viewId}')"]`).forEach(link => link.classList.add('text-white'));
 
-            // Check authorization state before entering admin dashboard
             if (viewId === 'admin-dashboard') {
                 try {
                     const user = await api.req('/auth/me');
@@ -480,7 +514,7 @@
 
                 let totalRequests = projects.length;
                 let inDev = projects.filter(p => p.status === 'IN DEVELOPMENT' || !p.status || p.status === 'Pending').length;
-                let completed = projects.filter(p => p.status === 'Completed').length;
+                let completed = projects.filter(p => p.status === 'Completed' || p.status === 'COMPLETED').length;
 
                 let html = `
                     <div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">
@@ -527,6 +561,7 @@
                                         <th class="py-4 px-6">Status</th>
                                         <th class="py-4 px-6">Payment</th>
                                         <th class="py-4 px-6">Created</th>
+                                        <th class="py-4 px-6 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-zinc-800/60 text-sm text-zinc-300">
@@ -540,8 +575,9 @@
                         const safeStatus = escapeHTML(p.status || 'IN DEVELOPMENT');
                         const safePayment = escapeHTML(p.payment_status || 'Pending');
                         const safeDate = new Date(p.created_at || Date.now()).toLocaleDateString();
+                        const unreadCount = p.unread_messages || 0;
 
-                        const statusColor = safeStatus === 'Completed' ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
+                        const statusColor = (safeStatus === 'Completed' || safeStatus === 'COMPLETED') ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
                         const paymentColor = safePayment === 'Paid' ? 'text-green-400' : 'text-yellow-400';
 
                         html += `
@@ -551,10 +587,16 @@
                                     <div class="font-bold text-white">${safeCustomerName}</div>
                                     <div class="text-xs text-zinc-500">${safeCustomerEmail}</div>
                                 </td>
-                                <td class="py-4 px-6 font-semibold text-white">${safeWebsiteName}</td>
+                                <td class="py-4 px-6 font-semibold text-white">
+                                    ${safeWebsiteName}
+                                    ${unreadCount > 0 ? `<span class="ml-2 px-2 py-0.5 text-[10px] bg-red-500 text-white rounded-full font-bold">${unreadCount} new</span>` : ''}
+                                </td>
                                 <td class="py-4 px-6"><span class="px-3 py-1 rounded-full text-xs font-bold border ${statusColor}">${safeStatus}</span></td>
                                 <td class="py-4 px-6 font-medium ${paymentColor}">${safePayment}</td>
                                 <td class="py-4 px-6 text-zinc-400 text-xs">${safeDate}</td>
+                                <td class="py-4 px-6 text-right">
+                                    <button onclick="openAdminManageModal(${safeId})" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold transition shadow-md active:scale-95">Manage</button>
+                                </td>
                             </tr>
                         `;
                     });
@@ -578,6 +620,259 @@
                 } else {
                     container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-2">Unable to load website requests</h2><p class="text-zinc-400">${escapeHTML(e.message)}</p></div>`;
                 }
+            }
+        }
+
+        // Admin Manage Project Modal logic
+        async function openAdminManageModal(projectId) {
+            const modal = document.getElementById('admin-manage-modal');
+            const content = document.getElementById('admin-manage-content');
+            content.innerHTML = `<div class="py-12 text-center text-zinc-500">Loading project details...</div>`;
+            modal.classList.remove('hidden');
+            appState.currentProjectId = projectId;
+
+            try {
+                const p = await api.req(`/admin/projects/${projectId}`);
+                renderAdminManageForm(p);
+                loadAdminChat(projectId);
+                startChatPolling(() => loadAdminChat(projectId));
+            } catch (e) {
+                content.innerHTML = `<div class="text-red-400 text-center py-6">Failed to load project details: ${escapeHTML(e.message)}</div>`;
+            }
+        }
+
+        function closeAdminManageModal() {
+            document.getElementById('admin-manage-modal').classList.add('hidden');
+            stopChatPolling();
+            appState.currentProjectId = null;
+            if (appState.currentView === 'admin-dashboard') {
+                renderAdminDashboardView(document.getElementById('app-main'));
+            }
+        }
+
+        function renderAdminManageForm(p) {
+            const content = document.getElementById('admin-manage-content');
+            const statuses = ['REQUESTED', 'APPROVED', 'IN DEVELOPMENT', 'PREVIEW READY', 'CHANGES REQUESTED', 'COMPLETED', 'PAYMENT REQUIRED', 'PAID', 'LAUNCHED', 'REJECTED', 'Completed'];
+
+            content.innerHTML = `
+                <div class="border-b border-zinc-800 pb-4 mb-6">
+                    <span class="text-xs font-bold uppercase tracking-widest text-brand-500">Manage Project</span>
+                    <h2 class="text-2xl font-bold text-white mt-1">${escapeHTML(p.website_name)}</h2>
+                    <p class="text-xs text-zinc-400 mt-1">Request ID: #${escapeHTML(p.id)} | Created: ${new Date(p.created_at).toLocaleDateString()}</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 text-sm">
+                    <div class="glass-panel p-4 rounded-2xl border border-zinc-800 space-y-2">
+                        <p class="text-xs font-bold text-zinc-500 uppercase">Customer Information</p>
+                        <p class="text-white font-semibold">${escapeHTML(p.customer_name || p.name || 'N/A')}</p>
+                        <p class="text-xs text-zinc-400">${escapeHTML(p.customer_email || p.email || 'N/A')}</p>
+                    </div>
+                    <div class="glass-panel p-4 rounded-2xl border border-zinc-800 space-y-2">
+                        <p class="text-xs font-bold text-zinc-500 uppercase">Payment Status (Read Only)</p>
+                        <p class="text-lg font-bold ${p.payment_status === 'Paid' ? 'text-green-400' : 'text-yellow-400'}">${escapeHTML(p.payment_status || 'Pending')}</p>
+                        <p class="text-[10px] text-zinc-500">Managed automatically via payment system.</p>
+                    </div>
+                </div>
+
+                <div class="glass-panel p-4 rounded-2xl border border-zinc-800 mb-6 space-y-2">
+                    <p class="text-xs font-bold text-zinc-500 uppercase">Full Requirements</p>
+                    <p class="text-sm text-zinc-300 whitespace-pre-wrap max-h-36 overflow-y-auto">${escapeHTML(p.requirements)}</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Workflow Status</label>
+                        <select id="manage-status" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-brand-500">
+                            ${statuses.map(s => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Preview URL</label>
+                        <input type="url" id="manage-preview-url" value="${escapeHTML(p.preview_url || '')}" placeholder="https://" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Live URL</label>
+                        <input type="url" id="manage-live-url" value="${escapeHTML(p.live_url || '')}" placeholder="https://" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-brand-500">
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-3 mb-8">
+                    <button onclick="updateAdminProject(${p.id})" class="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs rounded-xl transition shadow-md active:scale-95">Save Changes</button>
+                    <button onclick="quickSetStatus(${p.id}, 'APPROVED')" class="px-4 py-2.5 bg-green-600/20 border border-green-500/30 text-green-400 font-semibold text-xs rounded-xl hover:bg-green-600/30 transition">Approve</button>
+                    <button onclick="quickSetStatus(${p.id}, 'REJECTED')" class="px-4 py-2.5 bg-red-600/20 border border-red-500/30 text-red-400 font-semibold text-xs rounded-xl hover:bg-red-600/30 transition">Reject</button>
+                </div>
+
+                <div class="border-t border-zinc-800 pt-6">
+                    <h3 class="text-base font-bold text-white mb-4"><i class="fa-solid fa-comments text-brand-500 mr-2"></i> Project Chat</h3>
+                    <div id="admin-chat-messages" class="h-64 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl p-4 space-y-3 mb-4 text-xs">
+                        <!-- Messages populated dynamically -->
+                    </div>
+                    <form onsubmit="sendAdminMessage(event, ${p.id})" class="flex space-x-2">
+                        <input type="text" id="admin-chat-input" placeholder="Type a reply to customer..." required maxlength="3000" class="flex-grow bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-xs focus:outline-none focus:border-brand-500">
+                        <button type="submit" class="px-5 py-3 bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs rounded-xl transition shadow-md active:scale-95">Send</button>
+                    </form>
+                </div>
+            `;
+        }
+
+        async function updateAdminProject(projectId) {
+            const status = document.getElementById('manage-status').value;
+            const preview_url = document.getElementById('manage-preview-url').value.trim();
+            const live_url = document.getElementById('manage-live-url').value.trim();
+
+            try {
+                await api.req(`/admin/projects/${projectId}`, 'PATCH', { status, preview_url, live_url });
+                alert('Project updated successfully!');
+            } catch (e) {
+                alert('Failed to update project: ' + e.message);
+            }
+        }
+
+        async function quickSetStatus(projectId, status) {
+            try {
+                await api.req(`/admin/projects/${projectId}`, 'PATCH', { status });
+                document.getElementById('manage-status').value = status;
+                alert(`Project status updated to ${status}`);
+            } catch (e) {
+                alert('Failed to update status: ' + e.message);
+            }
+        }
+
+        async function loadAdminChat(projectId) {
+            try {
+                const messages = await api.req(`/admin/projects/${projectId}/messages`);
+                await api.req(`/admin/projects/${projectId}/messages/read`, 'POST');
+                const container = document.getElementById('admin-chat-messages');
+                if (!container) return;
+
+                if (!messages || messages.length === 0) {
+                    container.innerHTML = `<div class="text-zinc-500 text-center py-10">No messages in this chat yet.</div>`;
+                    return;
+                }
+
+                let html = '';
+                messages.forEach(m => {
+                    const isAdmin = m.sender_role === 'SUPER_ADMIN';
+                    const senderLabel = isAdmin ? 'Admin (You)' : 'Customer';
+                    const time = new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    
+                    html += `
+                        <div class="flex flex-col ${isAdmin ? 'items-end' : 'items-start'}">
+                            <div class="text-[10px] text-zinc-500 mb-1">${senderLabel} • ${time}</div>
+                            <div class="max-w-[80%] rounded-2xl px-4 py-2.5 ${isAdmin ? 'bg-brand-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none'}">
+                                ${escapeHTML(m.message)}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+                container.innerHTML = html;
+                if (isAtBottom) container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error('Failed to load admin chat', e);
+            }
+        }
+
+        async function sendAdminMessage(event, projectId) {
+            event.preventDefault();
+            const input = document.getElementById('admin-chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            try {
+                await api.req(`/admin/projects/${projectId}/messages`, 'POST', { message });
+                input.value = '';
+                await loadAdminChat(projectId);
+            } catch (e) {
+                alert('Failed to send message: ' + e.message);
+            }
+        }
+
+        // Customer Chat Modal Logic
+        async function openCustomerChatModal(projectId, websiteName) {
+            const modal = document.getElementById('customer-chat-modal');
+            const title = document.getElementById('customer-chat-title');
+            title.textContent = `Chat: ${websiteName}`;
+            modal.classList.remove('hidden');
+            appState.currentProjectId = projectId;
+
+            await loadCustomerChat(projectId);
+            startChatPolling(() => loadCustomerChat(projectId));
+        }
+
+        function closeCustomerChatModal() {
+            document.getElementById('customer-chat-modal').classList.add('hidden');
+            stopChatPolling();
+            appState.currentProjectId = null;
+            if (appState.currentView === 'track-status') {
+                renderTrackStatusView(document.getElementById('app-main'));
+            }
+        }
+
+        async function loadCustomerChat(projectId) {
+            try {
+                const messages = await api.req(`/customer/projects/${projectId}/messages`);
+                await api.req(`/customer/projects/${projectId}/messages/read`, 'POST');
+                const container = document.getElementById('customer-chat-messages');
+                if (!container) return;
+
+                if (!messages || messages.length === 0) {
+                    container.innerHTML = `<div class="text-zinc-500 text-center py-12">No messages yet. Send a message to your project administrator.</div>`;
+                    return;
+                }
+
+                let html = '';
+                messages.forEach(m => {
+                    const isCustomer = m.sender_role === 'CUSTOMER';
+                    const senderLabel = isCustomer ? 'You' : 'Admin';
+                    const time = new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    html += `
+                        <div class="flex flex-col ${isCustomer ? 'items-end' : 'items-start'}">
+                            <div class="text-[10px] text-zinc-500 mb-1">${senderLabel} • ${time}</div>
+                            <div class="max-w-[80%] rounded-2xl px-4 py-2.5 ${isCustomer ? 'bg-brand-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none'}">
+                                ${escapeHTML(m.message)}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+                container.innerHTML = html;
+                if (isAtBottom) container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error('Failed to load customer chat', e);
+            }
+        }
+
+        async function sendCustomerMessage(event) {
+            event.preventDefault();
+            const projectId = appState.currentProjectId;
+            if (!projectId) return;
+
+            const input = document.getElementById('customer-chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            try {
+                await api.req(`/customer/projects/${projectId}/messages`, 'POST', { message });
+                input.value = '';
+                await loadCustomerChat(projectId);
+            } catch (e) {
+                alert('Failed to send message: ' + e.message);
+            }
+        }
+
+        function startChatPolling(pollFn) {
+            stopChatPolling();
+            chatPollInterval = setInterval(pollFn, 4000);
+        }
+
+        function stopChatPolling() {
+            if (chatPollInterval) {
+                clearInterval(chatPollInterval);
+                chatPollInterval = null;
             }
         }
 
@@ -932,11 +1227,12 @@
                     const safeStatus = escapeHTML(p.status || 'IN DEVELOPMENT');
                     const safePayment = escapeHTML(p.payment_status || 'Pending');
                     const safeReqs = escapeHTML(p.requirements);
+                    const unreadCount = p.unread_messages || 0;
                     
                     const safePreviewUrl = p.preview_url ? escapeHTML(p.preview_url) : '';
                     const safeLiveUrl = p.live_url ? escapeHTML(p.live_url) : '';
 
-                    const statusColor = safeStatus === 'Completed' ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
+                    const statusColor = (safeStatus === 'Completed' || safeStatus === 'COMPLETED') ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
                     const paymentColor = safePayment === 'Paid' ? 'text-green-400' : 'text-yellow-400';
                     
                     html += `
@@ -949,7 +1245,7 @@
                             <span class="px-4 py-1.5 rounded-full text-xs font-bold border ${statusColor}">${safeStatus}</span>
                         </div>
                         
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm text-zinc-300">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm text-zinc-300 mb-6">
                             <div>
                                 <p class="mb-2"><span class="text-zinc-500 font-medium">Submitted:</span> ${new Date(p.created_at || Date.now()).toLocaleDateString()}</p>
                                 <p><span class="text-zinc-500 font-medium">Payment:</span> <span class="${paymentColor}">${safePayment}</span></p>
@@ -958,6 +1254,14 @@
                                 ${safePreviewUrl ? `<p class="mb-2"><span class="text-zinc-500 font-medium">Preview URL:</span> <a href="${safePreviewUrl}" target="_blank" rel="noopener noreferrer" class="text-brand-400 hover:text-brand-300 font-medium">${safePreviewUrl}</a></p>` : ''}
                                 ${safeLiveUrl ? `<p><span class="text-zinc-500 font-medium">Live URL:</span> <a href="${safeLiveUrl}" target="_blank" rel="noopener noreferrer" class="text-green-400 hover:text-green-300 font-medium">${safeLiveUrl}</a></p>` : ''}
                             </div>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-4 border-t border-zinc-800">
+                            <button onclick="openCustomerChatModal(${safeId}, '${safeName}')" class="px-5 py-2.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-white font-semibold text-xs rounded-xl transition flex items-center space-x-2">
+                                <i class="fa-solid fa-comments text-brand-400"></i>
+                                <span>Open Chat</span>
+                                ${unreadCount > 0 ? `<span class="px-2 py-0.5 text-[10px] bg-red-500 text-white rounded-full font-bold">${unreadCount} new</span>` : ''}
+                            </button>
                         </div>
                         
                         ${safeReqs ? `<div class="mt-6 pt-6 border-t border-zinc-800/50"><h4 class="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Original Requirements</h4><p class="text-sm text-zinc-400 leading-relaxed whitespace-pre-wrap">${safeReqs}</p></div>` : ''}
