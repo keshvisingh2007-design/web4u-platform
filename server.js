@@ -297,8 +297,8 @@ app.get('/api/portfolio', (req, res) => {
     ]);
 });
 
-// Serve frontend index.html for all other routes
-app.get('*', (req, res) => {
+// Fallback to serve index.html for frontend routing (Express 5 compatible)
+app.use((req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
