@@ -7,12 +7,13 @@ const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Trust proxy for secure cookies on Render
+// Trust proxy for secure cookies on Render/proxies
 app.set('trust proxy', 1);
 
 // Middleware
@@ -45,7 +46,7 @@ app.use(passport.session());
 // SQLite Database Setup
 const db = new sqlite3.Database('./database.sqlite', (err) => {
     if (err) {
-        console.error('Error opening database', err.message);
+        console.error('Error opening database:', err.message);
     } else {
         console.log('Connected to SQLite database.');
         initDb();
@@ -54,6 +55,7 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
 
 function initDb() {
     db.serialize(() => {
+        // Users Table
         db.run(`CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             google_id TEXT UNIQUE,
@@ -63,17 +65,31 @@ function initDb() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
+        // Projects Table
         db.run(`CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            website_name TEXT,
-            requirements TEXT,
-            status TEXT DEFAULT 'IN DEVELOPMENT',
+            user_id INTEGER NOT NULL,
+            website_name TEXT NOT NULL,
+            requirements TEXT NOT NULL,
+            status TEXT DEFAULT 'REQUESTED',
             payment_status TEXT DEFAULT 'Pending',
             preview_url TEXT,
             live_url TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id)
+        )`);
+
+        // Messages Table
+        db.run(`CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            sender_user_id INTEGER NOT NULL,
+            sender_role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            read_at DATETIME NULL,
+            FOREIGN KEY(project_id) REFERENCES projects(id),
+            FOREIGN KEY(sender_user_id) REFERENCES users(id)
         )`);
     });
 }
@@ -121,17 +137,42 @@ passport.deserializeUser((id, done) => {
     });
 });
 
+// Helper Middlewares
+function requireAuth(req, res, next) {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    next();
+}
+
+function requireAdmin(req, res, next) {
+    if (!req.isAuthenticated() || req.user.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Unauthorized. Super Admin privileges required.' });
+    }
+    next();
+}
+
+// Utility: URL Validation
+function isValidSafeUrl(string) {
+    if (!string || string.trim() === '') return true;
+    try {
+        const parsed = new URL(string);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch (_) {
+        return false;
+    }
+}
+
 // Rate limiting for auth routes
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: 25,
     standardHeaders: true,
     legacyHeaders: false,
 });
 
-// --- API ROUTES ---
+// --- AUTHENTICATION ROUTES ---
 
-// Auth Routes
 app.get('/api/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/api/auth/google/callback', 
@@ -158,18 +199,10 @@ app.post('/api/auth/logout', (req, res, next) => {
     });
 });
 
-// Admin Login Route with Diagnostic Logging
+// Admin Login Route
 app.post('/api/auth/admin-login', authLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
-
-        console.log({
-            adminEmailConfigured: Boolean(process.env.ADMIN_EMAIL),
-            adminPasswordHashConfigured: Boolean(process.env.ADMIN_PASSWORD_HASH),
-            hashLength: process.env.ADMIN_PASSWORD_HASH ? process.env.ADMIN_PASSWORD_HASH.length : 0,
-            bcryptPrefixValid: /^\$2[aby]\$/.test(process.env.ADMIN_PASSWORD_HASH || ''),
-            submittedEmailMatches: Boolean(email) && Boolean(process.env.ADMIN_EMAIL) && email.trim().toLowerCase() === process.env.ADMIN_EMAIL.trim().toLowerCase()
-        });
 
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
@@ -185,15 +218,10 @@ app.post('/api/auth/admin-login', authLimiter, async (req, res) => {
         const emailMatch = email.trim().toLowerCase() === adminEmail.trim().toLowerCase();
         const passwordMatch = await bcrypt.compare(password, adminHash);
 
-        console.log({
-            passwordHashMatch: passwordMatch
-        });
-
         if (!emailMatch || !passwordMatch) {
             return res.status(401).json({ error: 'Invalid admin credentials' });
         }
 
-        // Check SQLite for SUPER_ADMIN user
         db.get(`SELECT * FROM users WHERE email = ? AND role = 'SUPER_ADMIN'`, [adminEmail], (err, adminUser) => {
             if (err) {
                 console.error('Database error during admin lookup:', err);
@@ -224,58 +252,160 @@ app.post('/api/auth/admin-login', authLimiter, async (req, res) => {
                     });
             }
         });
-
     } catch (error) {
         console.error('Admin login error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-// Project Routes (Customer)
-app.post('/api/projects', (req, res) => {
-    if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
+// --- CUSTOMER PROJECT ROUTES ---
 
-    const { requirements } = req.body;
-    if (!requirements) {
-        return res.status(400).json({ error: 'Requirements are required' });
+app.post('/api/projects', requireAuth, (req, res) => {
+    const { requirements, website_name } = req.body;
+    if (!requirements || requirements.trim() === '') {
+        return res.status(400).json({ error: 'Website requirements are required' });
     }
 
     const userId = req.user.id;
-    const websiteName = requirements.split('\n')[0].substring(0, 50) || 'Custom Website';
+    const websiteName = (website_name && website_name.trim()) 
+        ? website_name.trim().substring(0, 80)
+        : requirements.split('\n')[0].substring(0, 50) || 'Custom Website';
 
-    db.run(`INSERT INTO projects (user_id, website_name, requirements, status, payment_status) VALUES (?, ?, ?, 'IN DEVELOPMENT', 'Pending')`,
-        [userId, websiteName, requirements], function(err) {
+    db.run(
+        `INSERT INTO projects (user_id, website_name, requirements, status, payment_status) VALUES (?, ?, ?, 'REQUESTED', 'Pending')`,
+        [userId, websiteName, requirements.trim()],
+        function(err) {
             if (err) {
-                return res.status(500).json({ error: 'Failed to create project' });
+                console.error('Failed to create project:', err);
+                return res.status(500).json({ error: 'Failed to submit website request' });
             }
             res.json({ success: true, projectId: this.lastID });
-        });
+        }
+    );
 });
 
-app.get('/api/customer/projects', (req, res) => {
-    if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
-
+app.get('/api/customer/projects', requireAuth, (req, res) => {
     const userId = req.user.id;
-    db.all(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC`, [userId], (err, rows) => {
+    const query = `
+        SELECT p.*,
+            (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id AND m.sender_role = 'SUPER_ADMIN' AND m.read_at IS NULL) as unread_messages
+        FROM projects p 
+        WHERE p.user_id = ? 
+        ORDER BY p.created_at DESC
+    `;
+    db.all(query, [userId], (err, rows) => {
         if (err) {
-            return res.status(500).json({ error: 'Failed to fetch projects' });
+            return res.status(500).json({ error: 'Failed to fetch customer projects' });
         }
-        res.json(rows);
+        res.json(rows || []);
     });
 });
 
-// Admin Projects Route
-app.get('/api/admin/projects', (req, res) => {
-    if (!req.isAuthenticated() || req.user.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({ error: 'Unauthorized access' });
+app.get('/api/customer/projects/:projectId', requireAuth, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
     }
 
     const query = `
-        SELECT p.*, u.name as customer_name, u.email as customer_email 
+        SELECT p.*,
+            (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id AND m.sender_role = 'SUPER_ADMIN' AND m.read_at IS NULL) as unread_messages
+        FROM projects p 
+        WHERE p.id = ? AND p.user_id = ?
+    `;
+    db.get(query, [projectId, req.user.id], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: 'Database error fetching project' });
+        }
+        if (!row) {
+            return res.status(404).json({ error: 'Project not found or unauthorized' });
+        }
+        res.json(row);
+    });
+});
+
+// Customer Messages
+app.get('/api/customer/projects/:projectId/messages', requireAuth, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    // Verify ownership
+    db.get(`SELECT id FROM projects WHERE id = ? AND user_id = ?`, [projectId, req.user.id], (err, project) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        db.all(
+            `SELECT * FROM messages WHERE project_id = ? ORDER BY created_at ASC`,
+            [projectId],
+            (err, messages) => {
+                if (err) return res.status(500).json({ error: 'Failed to fetch messages' });
+                res.json(messages || []);
+            }
+        );
+    });
+});
+
+app.post('/api/customer/projects/:projectId/messages', requireAuth, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    const { message } = req.body;
+
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+    if (!message || message.trim() === '') {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+    if (message.length > 3000) {
+        return res.status(400).json({ error: 'Message length exceeds 3000 characters' });
+    }
+
+    // Verify ownership
+    db.get(`SELECT id FROM projects WHERE id = ? AND user_id = ?`, [projectId, req.user.id], (err, project) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        db.run(
+            `INSERT INTO messages (project_id, sender_user_id, sender_role, message) VALUES (?, ?, 'CUSTOMER', ?)`,
+            [projectId, req.user.id, message.trim()],
+            function(err) {
+                if (err) return res.status(500).json({ error: 'Failed to send message' });
+                db.get(`SELECT * FROM messages WHERE id = ?`, [this.lastID], (err, newMsg) => {
+                    if (err) return res.status(500).json({ error: 'Failed to retrieve saved message' });
+                    res.json(newMsg);
+                });
+            }
+        );
+    });
+});
+
+app.post('/api/customer/projects/:projectId/messages/read', requireAuth, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    db.get(`SELECT id FROM projects WHERE id = ? AND user_id = ?`, [projectId, req.user.id], (err, project) => {
+        if (err || !project) return res.status(404).json({ error: 'Project not found' });
+
+        db.run(
+            `UPDATE messages SET read_at = CURRENT_TIMESTAMP WHERE project_id = ? AND sender_role = 'SUPER_ADMIN' AND read_at IS NULL`,
+            [projectId],
+            (err) => {
+                if (err) return res.status(500).json({ error: 'Failed to mark messages as read' });
+                res.json({ success: true });
+            }
+        );
+    });
+});
+
+// --- SUPER ADMIN PROJECT ROUTES ---
+
+app.get('/api/admin/projects', requireAdmin, (req, res) => {
+    const query = `
+        SELECT p.*, u.name as customer_name, u.email as customer_email,
+            (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id AND m.sender_role = 'CUSTOMER' AND m.read_at IS NULL) as unread_messages
         FROM projects p 
         LEFT JOIN users u ON p.user_id = u.id 
         ORDER BY p.created_at DESC
@@ -285,21 +415,214 @@ app.get('/api/admin/projects', (req, res) => {
         if (err) {
             return res.status(500).json({ error: 'Failed to fetch admin projects' });
         }
-        res.json(rows);
+        res.json(rows || []);
     });
 });
 
-// Portfolio Endpoint fallback
+app.get('/api/admin/projects/:projectId', requireAdmin, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    const query = `
+        SELECT p.*, u.name as customer_name, u.email as customer_email,
+            (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id AND m.sender_role = 'CUSTOMER' AND m.read_at IS NULL) as unread_messages
+        FROM projects p 
+        LEFT JOIN users u ON p.user_id = u.id 
+        WHERE p.id = ?
+    `;
+
+    db.get(query, [projectId], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: 'Database error' });
+        }
+        if (!row) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+        res.json(row);
+    });
+});
+
+app.patch('/api/admin/projects/:projectId', requireAdmin, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    const { status, preview_url, live_url } = req.body;
+
+    const allowedStatuses = [
+        'REQUESTED',
+        'APPROVED',
+        'IN DEVELOPMENT',
+        'PREVIEW READY',
+        'CHANGES REQUESTED',
+        'COMPLETED',
+        'PAYMENT REQUIRED',
+        'PAID',
+        'LAUNCHED',
+        'REJECTED',
+        'Completed' // Legacy support
+    ];
+
+    const updates = [];
+    const params = [];
+
+    if (status !== undefined) {
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({ error: `Invalid status. Must be one of: ${allowedStatuses.join(', ')}` });
+        }
+        updates.push('status = ?');
+        params.push(status);
+    }
+
+    if (preview_url !== undefined) {
+        if (preview_url && preview_url.trim() !== '' && !isValidSafeUrl(preview_url.trim())) {
+            return res.status(400).json({ error: 'Invalid Preview URL format. Must start with http:// or https://' });
+        }
+        updates.push('preview_url = ?');
+        params.push(preview_url ? preview_url.trim() : null);
+    }
+
+    if (live_url !== undefined) {
+        if (live_url && live_url.trim() !== '' && !isValidSafeUrl(live_url.trim())) {
+            return res.status(400).json({ error: 'Invalid Live URL format. Must start with http:// or https://' });
+        }
+        updates.push('live_url = ?');
+        params.push(live_url ? live_url.trim() : null);
+    }
+
+    if (updates.length === 0) {
+        return res.status(400).json({ error: 'No valid fields provided for update' });
+    }
+
+    // Verify project existence
+    db.get(`SELECT id FROM projects WHERE id = ?`, [projectId], (err, project) => {
+        if (err) return res.status(500).json({ error: 'Database error' });
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        params.push(projectId);
+        const sql = `UPDATE projects SET ${updates.join(', ')} WHERE id = ?`;
+
+        db.run(sql, params, function(err) {
+            if (err) {
+                console.error('Project update error:', err);
+                return res.status(500).json({ error: 'Failed to update project' });
+            }
+
+            db.get(`SELECT p.*, u.name as customer_name, u.email as customer_email FROM projects p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?`, [projectId], (err, updated) => {
+                if (err) return res.status(500).json({ error: 'Failed to fetch updated project' });
+                res.json({ success: true, project: updated });
+            });
+        });
+    });
+});
+
+// Admin Project Messages
+app.get('/api/admin/projects/:projectId/messages', requireAdmin, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    db.get(`SELECT id FROM projects WHERE id = ?`, [projectId], (err, project) => {
+        if (err || !project) return res.status(404).json({ error: 'Project not found' });
+
+        db.all(
+            `SELECT m.*, u.name as sender_name, u.email as sender_email 
+             FROM messages m 
+             LEFT JOIN users u ON m.sender_user_id = u.id 
+             WHERE m.project_id = ? 
+             ORDER BY m.created_at ASC`,
+            [projectId],
+            (err, messages) => {
+                if (err) return res.status(500).json({ error: 'Failed to fetch messages' });
+                res.json(messages || []);
+            }
+        );
+    });
+});
+
+app.post('/api/admin/projects/:projectId/messages', requireAdmin, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    const { message } = req.body;
+
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+    if (!message || message.trim() === '') {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+    if (message.length > 3000) {
+        return res.status(400).json({ error: 'Message length exceeds 3000 characters' });
+    }
+
+    db.get(`SELECT id FROM projects WHERE id = ?`, [projectId], (err, project) => {
+        if (err || !project) return res.status(404).json({ error: 'Project not found' });
+
+        db.run(
+            `INSERT INTO messages (project_id, sender_user_id, sender_role, message) VALUES (?, ?, 'SUPER_ADMIN', ?)`,
+            [projectId, req.user.id, message.trim()],
+            function(err) {
+                if (err) return res.status(500).json({ error: 'Failed to post admin reply' });
+                db.get(`SELECT * FROM messages WHERE id = ?`, [this.lastID], (err, newMsg) => {
+                    if (err) return res.status(500).json({ error: 'Failed to retrieve saved message' });
+                    res.json(newMsg);
+                });
+            }
+        );
+    });
+});
+
+app.post('/api/admin/projects/:projectId/messages/read', requireAdmin, (req, res) => {
+    const projectId = parseInt(req.params.projectId, 10);
+    if (isNaN(projectId)) {
+        return res.status(400).json({ error: 'Invalid project ID' });
+    }
+
+    db.get(`SELECT id FROM projects WHERE id = ?`, [projectId], (err, project) => {
+        if (err || !project) return res.status(404).json({ error: 'Project not found' });
+
+        db.run(
+            `UPDATE messages SET read_at = CURRENT_TIMESTAMP WHERE project_id = ? AND sender_role = 'CUSTOMER' AND read_at IS NULL`,
+            [projectId],
+            (err) => {
+                if (err) return res.status(500).json({ error: 'Failed to mark messages as read' });
+                res.json({ success: true });
+            }
+        );
+    });
+});
+
+// --- PORTFOLIO & STATIC ROUTES ---
+
 app.get('/api/portfolio', (req, res) => {
     res.json([
-        { title: 'Tech Startup Dashboard', category: 'Web App', description: 'Advanced responsive dashboard built for an AI analytics company.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Dashboard+UI' },
-        { title: 'Local Coffee Roaster', category: 'E-Commerce', description: 'Clean, modern storefront with integrated local delivery zones.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' }
+        { 
+            title: 'Tech Startup SaaS Dashboard', 
+            category: 'Web App', 
+            description: 'Advanced responsive analytics portal built for a high-growth AI analytics brand.', 
+            image_url: 'https://placehold.co/800x600/18181b/6366f1?text=SaaS+Dashboard' 
+        },
+        { 
+            title: 'Artisan Coffee Roasters', 
+            category: 'E-Commerce', 
+            description: 'Modern storefront with automated local subscription fulfillment and mobile checkouts.', 
+            image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' 
+        },
+        { 
+            title: 'Modern Architecture Studio', 
+            category: 'Portfolio', 
+            description: 'Minimalist editorial showcase featuring smooth 3D parallax and immersive project galleries.', 
+            image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Design+Studio' 
+        }
     ]);
 });
 
 // Fallback to serve index.html for frontend routing (Express 5 compatible)
 app.use((req, res) => {
-    res.sendFile(__dirname + '/index.html');
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
