@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WEB4U — Custom Websites. Built Around Your Needs.</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -13,646 +14,940 @@
                 extend: {
                     colors: {
                         brand: {
-                            50: '#eef2ff',
-                            100: '#e0e7ff',
-                            500: '#6366f1',
-                            600: '#4f46e5',
-                            700: '#4338ca',
-                            900: '#312e81',
+                            50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1',
+                            600: '#4f46e5', 700: '#4338ca', 900: '#312e81',
                         }
                     },
                     fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
                     }
                 }
             }
         }
     </script>
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        .glass-panel { background: rgba(24, 24, 27, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(63, 63, 70, 0.4); }
-        .glow-effect { box-shadow: 0 0 50px -10px rgba(99, 102, 241, 0.15); }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #09090b; color: #f4f4f5; }
+        .glass-panel { background: rgba(24, 24, 27, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(63, 63, 70, 0.3); }
+        .ambient-glow { position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.04) 50%, transparent 70%); pointer-events: none; z-index: 0; filter: blur(60px); }
+        .cursor-blink::after { content: '|'; animation: blink 1s infinite; color: #6366f1; font-weight: 300; margin-left: 2px; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        
+        #web-canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+        
+        .reveal { opacity: 0; transform: translateY(20px); transition: all 0.8s ease-out; }
+        .reveal.active { opacity: 1; transform: translateY(0); }
+        
+        /* Mobile menu transitions */
+        #mobile-menu { transition: max-height 0.4s ease-in-out, opacity 0.4s ease-in-out; max-height: 0; opacity: 0; overflow: hidden; }
+        #mobile-menu.open { max-height: 400px; opacity: 1; }
+        
+        /* Accordion transition */
+        .accordion-content { transition: max-height 0.4s ease-in-out, opacity 0.4s ease-in-out; max-height: 0; opacity: 0; overflow: hidden; }
+        .accordion-content.open { max-height: 500px; opacity: 1; }
+        .accordion-icon { transition: transform 0.3s ease; }
+        .accordion-icon.open { transform: rotate(180deg); }
+
+        @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
     </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 antialiased flex flex-col min-h-screen selection:bg-brand-500 selection:text-white">
 
-    <!-- High-Tech Navigation Bar -->
-    <nav class="fixed w-full z-[100] top-0 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+    <nav class="fixed w-full z-[100] top-0 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-xl">
+        <div class="max-w-7xl mx-auto px-6 lg:px-8 h-20 flex items-center justify-between">
             <div class="flex items-center space-x-3 cursor-pointer group" onclick="navigate('home')">
-                <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center font-extrabold text-white text-xl shadow-lg shadow-brand-500/25 group-hover:scale-105 transition">W4</div>
-                <span class="text-xl font-extrabold tracking-tight text-white">WEB<span class="text-brand-500">4U</span></span>
+                <span class="text-xl font-bold tracking-tight text-white">WEB<span class="text-brand-500">4U</span></span>
             </div>
-            <div class="hidden md:flex items-center space-x-8 text-sm font-medium text-zinc-400">
-                <button onclick="navigate('home')" class="hover:text-white transition">Home</button>
-                <button onclick="navigate('services')" class="hover:text-white transition">Services</button>
-                <button onclick="navigate('pricing')" class="hover:text-white transition">Pricing</button>
-                <button onclick="navigate('our-work')" class="hover:text-white transition">Our Work</button>
-                <button onclick="navigate('how-it-works')" class="hover:text-white transition">How It Works</button>
-                <button onclick="navigate('customer-care')" class="hover:text-white transition">Customer Care</button>
-                <button onclick="navigate('track-status')" class="hover:text-white transition">Track Status</button>
+            
+            <!-- Desktop Links -->
+            <div class="hidden lg:flex items-center space-x-8 text-sm font-medium text-zinc-400">
+                <button onclick="navigate('home')" class="hover:text-white transition duration-200 nav-link">Home</button>
+                <button onclick="navigate('our-work')" class="hover:text-white transition duration-200 nav-link">Our Work</button>
+                <button onclick="navigate('pricing')" class="hover:text-white transition duration-200 nav-link">Pricing</button>
+                <button onclick="navigate('how-it-works')" class="hover:text-white transition duration-200 nav-link">How It Works</button>
+                <button onclick="navigate('customer-care')" class="hover:text-white transition duration-200 nav-link">Customer Care</button>
             </div>
-            <div class="flex items-center space-x-4">
+            
+            <!-- Auth & Track Button (Desktop) -->
+            <div class="hidden lg:flex items-center space-x-4">
+                <button onclick="navigate('track-status')" class="text-sm font-semibold text-brand-400 hover:text-brand-300 transition duration-200">
+                    Track Your Website
+                </button>
                 <div id="auth-nav-container">
-                    <button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800">
+                    <button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800 active:scale-95">
                         Sign In
                     </button>
                 </div>
             </div>
+
+            <!-- Mobile Menu Toggle -->
+            <div class="lg:hidden flex items-center">
+                <button id="mobile-menu-btn" class="text-zinc-400 hover:text-white focus:outline-none p-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Mobile Menu Dropdown -->
+        <div id="mobile-menu" class="lg:hidden bg-zinc-950 border-b border-zinc-900 px-6 py-4 space-y-4">
+            <button onclick="navigate('home'); closeMobileMenu()" class="block w-full text-left text-zinc-400 hover:text-white font-medium">Home</button>
+            <button onclick="navigate('our-work'); closeMobileMenu()" class="block w-full text-left text-zinc-400 hover:text-white font-medium">Our Work</button>
+            <button onclick="navigate('pricing'); closeMobileMenu()" class="block w-full text-left text-zinc-400 hover:text-white font-medium">Pricing</button>
+            <button onclick="navigate('how-it-works'); closeMobileMenu()" class="block w-full text-left text-zinc-400 hover:text-white font-medium">How It Works</button>
+            <button onclick="navigate('customer-care'); closeMobileMenu()" class="block w-full text-left text-zinc-400 hover:text-white font-medium">Customer Care</button>
+            <button onclick="navigate('track-status'); closeMobileMenu()" class="block w-full text-left text-brand-400 font-bold border-t border-zinc-800 pt-4">Track Your Website</button>
+            <div id="mobile-auth-container" class="pt-2"></div>
         </div>
     </nav>
 
-    <!-- Main Content Dynamic Viewport -->
     <main id="app-main" class="flex-grow pt-20">
         <!-- Injected views appear here -->
     </main>
 
-    <!-- Footer -->
-    <footer class="border-t border-zinc-900 bg-zinc-950 py-16 px-4 sm:px-6 lg:px-8 mt-20">
-        <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
+    <footer class="border-t border-zinc-900 bg-zinc-950 py-16 px-6 lg:px-8 mt-24">
+        <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
             <div>
                 <div class="flex items-center space-x-3 mb-4">
-                    <div class="w-8 h-8 rounded-xl bg-brand-600 flex items-center justify-center font-bold text-white text-sm">W4</div>
-                    <span class="font-bold text-white text-lg">WEB4U</span>
+                    <span class="font-bold text-white text-lg tracking-tight">WEB4U</span>
                 </div>
-                <p class="text-sm text-zinc-400 leading-relaxed">Custom Websites. Built Around Your Needs. Professional planning, design, development and publishing.</p>
+                <p class="text-sm text-zinc-400 leading-relaxed">Custom professional websites built around your requirements.</p>
             </div>
             <div>
-                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Navigation</h4>
-                <ul class="space-y-2 text-sm text-zinc-400">
-                    <li><button onclick="navigate('services')" class="hover:text-white transition">Services</button></li>
-                    <li><button onclick="navigate('pricing')" class="hover:text-white transition">Pricing Plans</button></li>
-                    <li><button onclick="navigate('our-work')" class="hover:text-white transition">Our Portfolio</button></li>
+                <h4 class="text-xs font-semibold uppercase text-zinc-500 tracking-wider mb-4">Navigation</h4>
+                <ul class="space-y-3 text-sm text-zinc-400">
+                    <li><button onclick="navigate('home')" class="hover:text-white transition">Home</button></li>
+                    <li><button onclick="navigate('our-work')" class="hover:text-white transition">Our Work</button></li>
+                    <li><button onclick="navigate('pricing')" class="hover:text-white transition">Pricing</button></li>
                     <li><button onclick="navigate('how-it-works')" class="hover:text-white transition">How It Works</button></li>
                 </ul>
             </div>
             <div>
-                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Support & Trust</h4>
-                <ul class="space-y-2 text-sm text-zinc-400">
-                    <li><button onclick="navigate('customer-care')" class="hover:text-white transition">Customer Care & FAQ</button></li>
-                    <li><button onclick="navigate('track-status')" class="hover:text-white transition">Track Status</button></li>
-                    <li><button onclick="openAdminLoginModal()" class="text-brand-400 hover:text-brand-300 transition">Super Admin Portal</button></li>
+                <h4 class="text-xs font-semibold uppercase text-zinc-500 tracking-wider mb-4">Support</h4>
+                <ul class="space-y-3 text-sm text-zinc-400">
+                    <li><button onclick="navigate('track-status')" class="hover:text-white transition text-brand-400 font-medium">Track Your Website</button></li>
+                    <li><button onclick="navigate('customer-care')" class="hover:text-white transition">Customer Care</button></li>
+                    <li><a href="mailto:keshvisingh2007@gmail.com" class="hover:text-white transition">keshvisingh2007@gmail.com</a></li>
                 </ul>
             </div>
             <div>
-                <h4 class="text-xs font-semibold uppercase text-zinc-400 tracking-wider mb-4">Secure Platform</h4>
-                <p class="text-xs text-zinc-500 leading-relaxed">Secured via Google OAuth and verified Cashfree checkout. Transparent one-time project pricing.</p>
+                <h4 class="text-xs font-semibold uppercase text-zinc-500 tracking-wider mb-4">Legal</h4>
+                <ul class="space-y-3 text-sm text-zinc-400">
+                    <li><button onclick="navigate('terms')" class="hover:text-white transition">Terms & Conditions</button></li>
+                    <li><button onclick="navigate('privacy')" class="hover:text-white transition">Privacy Policy</button></li>
+                </ul>
             </div>
         </div>
-        <div class="max-w-7xl mx-auto pt-8 border-t border-zinc-900 flex flex-col sm:flex-row justify-between items-center text-xs text-zinc-500">
+        <div class="max-w-7xl mx-auto pt-8 border-t border-zinc-900/80 flex flex-col sm:flex-row justify-between items-center text-xs text-zinc-500">
             <p>© 2026 WEB4U. All rights reserved.</p>
-            <div class="flex space-x-6 mt-4 sm:mt-0">
-                <span>Privacy Protected</span>
-                <span>Secure Payments</span>
-            </div>
         </div>
     </footer>
 
     <!-- Google Login Modal -->
     <div id="login-modal" class="hidden fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative border border-zinc-800">
             <button onclick="closeLoginModal()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
             <div class="text-center mb-8">
-                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center font-bold text-white text-2xl mx-auto mb-4 shadow-lg shadow-brand-500/30">W4</div>
-                <h3 class="text-2xl font-bold text-white">Sign in to WEB4U</h3>
+                <h3 class="text-2xl font-bold text-white tracking-tight">Sign in to WEB4U</h3>
                 <p class="text-sm text-zinc-400 mt-2">Access your website requests, projects, and secure live tracking portal.</p>
             </div>
             <div class="space-y-4">
-                <a href="/api/auth/google" class="w-full py-3.5 px-4 rounded-xl bg-white text-zinc-900 font-semibold hover:bg-zinc-100 transition flex items-center justify-center space-x-3 shadow-md">
+                <a href="/api/auth/google" class="w-full py-3.5 px-4 rounded-xl bg-white text-zinc-900 font-semibold hover:bg-zinc-100 transition flex items-center justify-center space-x-3 shadow-lg active:scale-95">
                     <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
                     <span>Continue with Google</span>
                 </a>
-                <button onclick="openAdminLoginModal()" class="w-full py-3 px-4 rounded-xl bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 text-xs font-medium hover:bg-zinc-800 transition">
-                    Super Admin Command Portal Login
-                </button>
             </div>
         </div>
     </div>
 
-    <!-- Super Admin Login Modal -->
-    <div id="admin-login-modal" class="hidden fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative border-red-500/20">
-            <button onclick="closeAdminLoginModal()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
-            <div class="text-center mb-8">
-                <div class="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-red-400 text-2xl mx-auto mb-4 shadow-lg">🔒</div>
-                <h3 class="text-2xl font-bold text-white">Super Admin Access</h3>
-                <p class="text-sm text-zinc-400 mt-2">Restricted operational command center login.</p>
-            </div>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-xs font-semibold uppercase text-zinc-400 mb-1.5">Admin Email / Username</label>
-                    <input type="text" id="admin-email-input" value="" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500 transition">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold uppercase text-zinc-400 mb-1.5">Secure Password</label>
-                    <input type="password" id="admin-pass-input" value="" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500 transition">
-                </div>
-                <button onclick="submitAdminLogin()" class="w-full py-3.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition shadow-lg shadow-red-600/30">
-                    Authenticate Admin Session
-                </button>
-            </div>
+    <!-- Basic Domain Modal -->
+    <div id="domain-modal-basic" class="hidden fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative border border-zinc-800">
+            <button onclick="closeDomainModalBasic()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
+            <h3 class="text-xl font-bold text-white mb-4">Custom Domain (Optional)</h3>
+            <p class="text-sm text-zinc-300 leading-relaxed">Custom domain is available as an optional add-on for this plan. Raise a request through Track Your Website and Web4U will check domain availability. If available, it will be charged separately.</p>
+            <button onclick="closeDomainModalBasic()" class="mt-8 w-full py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg active:scale-95">Understood</button>
+        </div>
+    </div>
+
+    <!-- Top Domain Modal -->
+    <div id="domain-modal-top" class="hidden fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel rounded-3xl max-w-md w-full p-8 shadow-2xl relative border border-zinc-800">
+            <button onclick="closeDomainModalTop()" class="absolute top-5 right-5 text-zinc-400 hover:text-white text-lg">✕</button>
+            <h3 class="text-xl font-bold text-white mb-4">Check Domain Availability</h3>
+            <p class="text-sm text-zinc-300 leading-relaxed">Tell Web4U the custom domain you want. We will check whether it is available and attach it to your website at no extra cost under the Top-Level plan.</p>
+            <button onclick="navigate('track-status'); closeDomainModalTop()" class="mt-8 w-full py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg active:scale-95">Raise Request</button>
         </div>
     </div>
 
     <script>
-        // --- Single Source of Truth Datasets ---
-        const servicesDB = [
-            { id: '1', title: 'Custom Website Design', desc: 'Professional website design created around your business, brand and requirements.', icon: '🎨', cat: 'Design' },
-            { id: '2', title: 'Responsive Website Development', desc: 'Websites designed to work smoothly across mobile, tablet and desktop devices.', icon: '📱', cat: 'Development' },
-            { id: '3', title: 'Business & Local Websites', desc: 'Professional websites for clinics, restaurants, salons, coaches and local businesses.', icon: '🏢', cat: 'Business' },
-            { id: '4', title: 'Website Content Structure', desc: 'We help organize your business information into clear pages and sections.', icon: '📑', cat: 'Design' },
-            { id: '5', title: 'Website Deployment', desc: 'Once approved, we prepare and publish your website through secure hosting and domains.', icon: '🚀', cat: 'Deployment' },
-            { id: '6', title: 'Website Support', desc: 'Additional website updates, maintenance and related support handled when required.', icon: '🛠️', cat: 'Support' }
+        // Data Sources
+        const pricingDB = [
+            { id: 'basic', name: 'BASIC WEBSITE', price: '₹4,999', billing: 'One-time payment', badge: null, desc: 'Best for local shops and businesses that mainly need a professional website for online advertising and presence.', included: ['Lifetime website deployment', 'Essential business pages', 'Up to 5 pages', 'Customized website', 'Complete website code', 'Up to 3 modification requests per month — FREE'], notIncluded: ['Search Engine Optimization (SEO)', 'Website advertising / digital marketing', 'Third-party integrations', 'Website login system', 'Payment integration'] },
+            { id: 'moderate', name: 'MODERATE WEBSITE', price: '₹6,999', billing: 'One-time payment', badge: 'Most Popular', desc: 'Best for coaching businesses, agencies, shopping complexes and growing businesses that need a more detailed customized website.', included: ['Lifetime website deployment', 'Customized website', 'Up to 8 pages', 'Complete website code', 'Up to 5 modification requests per month — FREE', 'Enhanced graphical and visual design', 'Professional responsive design'], notIncluded: ['Third-party integrations', 'Website login system', 'Payment integration', 'Website advertising / digital marketing', 'Search Engine Optimization (SEO)'] },
+            { id: 'topend', name: 'TOP-LEVEL WEBSITE', price: '₹9,999', monthlyPrice: '+ ₹999/month', billing: 'One-time website setup + monthly service charge', badge: null, desc: 'Highly customized digital experiences with immersive animations, advanced visual interactions and supported integrations.', included: ['Fully custom brand aesthetic', 'Unlimited pages', 'Advanced visual interactions', 'Complete website code', 'Unlimited customization and modification requests within the plan scope', 'Priority customer care', 'Custom domain assistance where available', 'Secure login/authentication integration'], notIncluded: ['Website advertising / digital marketing', 'Search Engine Optimization (SEO)'], securityNotes: ['Login integrations may use secure authorization through the relevant authentication provider.'] }
         ];
 
-        const pricingDB = [
-            { id: 'basic', name: 'BASIC WEBSITE', price: '₹4,999', desc: 'Suitable for straightforward website requirements and small local businesses.', highlights: ['Professional responsive design', 'Essential business pages', 'Contact information', 'Basic deployment support'] },
-            { id: 'moderate', name: 'MODERATE WEBSITE', price: '₹6,999', desc: 'For more detailed business websites requiring customized layouts and sections.', badge: 'Most Popular', highlights: ['Customized design', 'Additional website sections', 'Detailed content structure', 'Enhanced interactions'] },
-            { id: 'topend', name: 'TOP-END WEBSITE', price: '₹9,999', desc: 'Highly customized business websites with advanced visual presentation.', highlights: ['Highly customized design', 'Complex page structures', 'Advanced visual presentation', 'Supported integrations'] }
+        const comparisonTable = [
+            { feature: 'Website Deployment', desc: 'Lifetime deployment with the applicable plan terms.', basic: '✓', mod: '✓', top: '✓' },
+            { feature: 'Pages', basic: 'Up to 5', mod: 'Up to 8', top: 'Unlimited' },
+            { feature: 'Customized Website', basic: '✓', mod: '✓', top: '✓' },
+            { feature: 'Complete Website Code', basic: '✓', mod: '✓', top: '✓' },
+            { feature: 'Modification Requests', basic: '3 / month', mod: '5 / month', top: 'Unlimited*' },
+            { feature: 'Responsive Design', basic: '✓', mod: '✓', top: '✓' },
+            { feature: 'Enhanced Visual Design', basic: '—', mod: '✓', top: '✓' },
+            { feature: 'Advanced Visual Interactions', basic: '—', mod: '—', top: '✓' },
+            { feature: 'Priority Customer Care', basic: '—', mod: '—', top: '✓' },
+            { feature: 'Login System', basic: '—', mod: '—', top: '✓<br><span class="text-[10px] text-zinc-500 font-normal block mt-1">Secure authorization</span>' },
+            { feature: 'Custom Domain', basic: '<button onclick="openDomainModalBasic()" class="inline-flex items-center px-4 py-1.5 rounded-full bg-brand-600/10 border border-brand-500/30 text-brand-400 text-xs font-semibold hover:bg-brand-600/20 hover:text-brand-300 transition-colors shadow-sm cursor-pointer active:scale-95 whitespace-nowrap">Optional</button>', mod: '<button onclick="openDomainModalBasic()" class="inline-flex items-center px-4 py-1.5 rounded-full bg-brand-600/10 border border-brand-500/30 text-brand-400 text-xs font-semibold hover:bg-brand-600/20 hover:text-brand-300 transition-colors shadow-sm cursor-pointer active:scale-95 whitespace-nowrap">Optional</button>', top: '<div class="flex items-center justify-center space-x-2"><span class="font-bold text-white text-sm">✓</span><span class="text-[10px] text-zinc-500 font-semibold block uppercase">Included FREE</span></div><button onclick="openDomainModalTop()" class="mt-2 inline-flex items-center px-4 py-1.5 rounded-full bg-brand-600 border border-brand-500 text-white text-xs font-bold hover:bg-brand-500 transition-colors shadow-md shadow-brand-600/20 cursor-pointer active:scale-95 whitespace-nowrap">Check Availability</button>' },
+            { feature: 'Search Engine Optimization (SEO)', desc: 'SEO is not included in any Web4U plan.', basic: '—', mod: '—', top: '—' },
+            { feature: 'Website Advertising / Marketing', desc: 'Advertising and digital marketing are not included.', basic: '—', mod: '—', top: '—' }
         ];
 
         const howItWorksDB = [
-            { num: '01', title: 'Tell Us What You Need', desc: 'Describe your website idea in simple words. No technical knowledge required.' },
-            { num: '02', title: 'We Review Your Requirements', desc: 'Our team reviews your submission and generates a unique Request ID.' },
-            { num: '03', title: 'Plan & Price Confirmed', desc: 'We recommend the best plan and confirm your final scope and timeline.' },
-            { num: '04', title: 'Approve & Pay', desc: 'Review your project details and complete secure payment via Cashfree.' },
-            { num: '05', title: 'We Build Your Website', desc: 'Development begins immediately according to your approved project scope.' },
-            { num: '06', title: 'Review & Request Changes', desc: 'Inspect your website preview and request any necessary adjustments.' },
-            { num: '07', title: 'Final Approval', desc: 'Approve the final version before we prepare for live publication.' },
-            { num: '08', title: 'Your Website Goes Live', desc: 'We publish your website and provide your live URL.' }
-        ];
-
-        const portfolioDB = [
-            { id: 'p1', title: 'Apex Care Clinic', category: 'Clinic', desc: 'Clean, professional medical practice website with appointment details and services.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Apex+Clinic' },
-            { id: 'p2', title: 'Trattoria Bella', category: 'Restaurant', desc: 'Warm, elegant restaurant site featuring interactive menus and gallery.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Trattoria+Bella' },
-            { id: 'p3', title: 'Elevate Elite Coaching', category: 'Coaching', desc: 'Conversion-focused personal brand coaching and program scheduling site.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Elevate+Coaching' },
-            { id: 'p4', title: 'Lumière Hair Salon', category: 'Salon', desc: 'Stylish booking-ready salon showcase with pricing and service catalogs.', image: 'https://placehold.co/600x400/18181b/6366f1?text=Lumiere+Salon' }
+            { num: '01', title: 'Submit Website Request', desc: 'Describe your website vision in simple language. No technical specifications are required.' },
+            { num: '02', title: 'Requirements Review', desc: 'Web4U will review your website requirements and decide whether your request can be approved. Once approved, we will begin building your website.' },
+            { num: '03', title: 'Website Development', desc: 'Web4U will build your website according to the approved requirements and plan.' },
+            { num: '04', title: 'Preview & Modifications', desc: 'Web4U will provide you with a Preview URL. Your preview will remain available for 7 days. During this period, you can review the website and suggest modifications.<br><br>Once you are satisfied with the website, approve it and request the launch.' },
+            { num: '05', title: 'Payment & Launch', desc: 'After you approve the website, Web4U will ask you to complete the payment. After successful payment, you will receive the permanent website link, usually within approximately 2 minutes, along with the complete code of your website.<br><br>Your website is then ready to launch.' }
         ];
 
         const faqDB = [
-            { cat: 'General', q: 'What is WEB4U?', a: 'WEB4U is a custom website service where you tell us what you need and we build a website around your requirements.' },
-            { cat: 'Requests', q: 'How do I request a website?', a: 'Use the request box on WEB4U, describe what you need and submit your requirements. You may log in with Google.' },
-            { cat: 'Pricing', q: 'How much does a website cost?', a: 'WEB4U offers Basic, Moderate and Top-End plans priced at ₹4,999, ₹6,999 and ₹9,999 respectively (one-time payment).' },
-            { cat: 'Payments', q: 'When do I pay?', a: 'Payment becomes available after your requirements have been reviewed and you approve the project details.' }
+            { cat: 'Process', q: 'How does a website get made?', a: 'First, you request a website through Web4U. After submitting your request, you receive a unique Request ID. Web4U then reviews your request and starts working according to the approved requirements. You can follow the progress using Track Your Website.<br><br>Track Your Website shows updates such as:<br>• Website Request Submitted<br>• Request Approved / Rejected<br>• Website In Development<br>• Website Completed<br>• Payment Required<br>• Website Link Available<br><br>After your website is completed, Web4U will ask you to make the required payment. Once payment is completed, the website link will be provided.' },
+            { cat: 'Support', q: 'What should I do if my website is not working?', a: 'If your website is not working, contact us at <a href="mailto:keshvisingh2007@gmail.com" class="text-brand-400 hover:text-brand-300 font-medium">keshvisingh2007@gmail.com</a> or raise an issue through Track Your Website.<br><br><button onclick="navigate(\'track-status\')" class="mt-3 px-5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs font-semibold text-white hover:bg-zinc-800 transition active:scale-95 shadow-sm">Track Your Website →</button>' },
+            { cat: 'Payment', q: 'I have completed my payment, but it is not showing on my website status. What should I do?', a: 'If your payment has been completed but your website status has not updated, contact us at <a href="mailto:keshvisingh2007@gmail.com" class="text-brand-400 hover:text-brand-300 font-medium">keshvisingh2007@gmail.com</a> or raise a query through Track Your Website.' },
+            { cat: 'Delivery', q: 'I have paid, but I have not received my website link yet. How long does it take?', a: 'If your website has already been completed, the website link usually becomes available within approximately 2–5 minutes after payment.<br><br>If your website has not been completed yet, development may take up to 24 hours depending on the requirements and project status.' },
+            { cat: 'Hosting', q: 'How does hosting and website ownership work?', a: 'Web4U provides the website and its live website link as part of our website-making service. Full website hosting and ownership are not included in the standard service.<br><br>If you need full ownership and independent hosting, Web4U can provide you with the complete website code. You can then host the website yourself using platforms such as Render or another hosting provider, and you can purchase and connect your own domain.<br><br>Web4U primarily provides website design and development. SEO, domain registration and independent hosting are not included in the standard website-making service.<br><br><span class="text-xs font-semibold text-brand-400 block mt-2">Need independent hosting? We can provide the complete website code for you.</span>' },
+            { cat: 'Marketing', q: 'How does SEO and marketing work?', a: 'Web4U provides website design and development but does not provide SEO or digital marketing services.<br><br>We provide the website link and, where applicable, the complete website code.<br><br>Web4U does not require your Gmail password or Gmail credentials for SEO. If you need SEO or marketing services, you can use a dedicated SEO or marketing provider.' },
+            { cat: 'Domains', q: 'How can I get a custom domain for my website?', a: 'You can raise a query with Web4U and request a custom domain.<br><br>Domain registration is a separate service and the domain cost depends on the domain name and extension you choose. Domain names also have renewal costs.<br><br>If you want to check domain availability yourself, you can use a domain registrar such as <a href="https://www.godaddy.com" target="_blank" rel="noopener noreferrer" class="text-brand-400 hover:text-brand-300 font-bold">GoDaddy</a>.' }
         ];
 
-        // --- Application State ---
-        let appState = {
-            user: null,
-            currentView: 'home',
-            currentProjectId: null,
-            pendingRequirements: null
-        };
+        let appState = { user: null, currentView: 'home', currentProjectId: null };
 
-        // --- REST API Client ---
+        // Mock API
         const api = {
-            async req(endpoint, method = 'GET', body = null) {
-                const options = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
-                if (body) options.body = JSON.stringify(body);
-                const res = await fetch('/api' + endpoint, options);
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'API Error');
-                return data;
+            async req(endpoint, method = 'GET', data = null) {
+                if (endpoint === '/auth/me') return null;
+                if (endpoint === '/portfolio') return [
+                    { title: 'Tech Startup Dashboard', category: 'Web App', description: 'Advanced responsive dashboard built for an AI analytics company.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Dashboard+UI' },
+                    { title: 'Local Coffee Roaster', category: 'E-Commerce', description: 'Clean, modern storefront with integrated local delivery zones.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' },
+                    { title: 'Law Firm Professional', category: 'Business', description: 'Authoritative online presence for a metropolitan legal practice.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Corporate+Site' },
+                    { title: 'Fitness Coach Platform', category: 'Coaching', description: 'Interactive site featuring workout videos and appointment booking.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Coaching+Platform' }
+                ];
+                if (endpoint === '/customer/projects') return [];
+                return { success: true };
             }
         };
 
-        // --- Router & Navigation Controller ---
+        // UI Helpers
+        function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
+        function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+        function openDomainModalBasic() { document.getElementById('domain-modal-basic').classList.remove('hidden'); }
+        function closeDomainModalBasic() { document.getElementById('domain-modal-basic').classList.add('hidden'); }
+        function openDomainModalTop() { document.getElementById('domain-modal-top').classList.remove('hidden'); }
+        function closeDomainModalTop() { document.getElementById('domain-modal-top').classList.add('hidden'); }
+
+        // Mobile Menu Logic
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('open');
+        });
+        function closeMobileMenu() {
+            mobileMenu.classList.remove('open');
+        }
+
+        // Scroll Animation Logic
+        function initScrollReveals() {
+            const reveals = document.querySelectorAll('.reveal');
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('active');
+                    }
+                });
+            }, { threshold: 0.1 });
+            reveals.forEach(reveal => observer.observe(reveal));
+        }
+
+        // FAQ Accordion Logic
+        window.toggleFAQ = function(index) {
+            const content = document.getElementById(`faq-content-${index}`);
+            const icon = document.getElementById(`faq-icon-${index}`);
+            content.classList.toggle('open');
+            icon.classList.toggle('open');
+        };
+
+        // Router & View Management
         async function navigate(viewId, param = null) {
+            cleanupPreviewEngine();
             appState.currentView = viewId;
             appState.currentProjectId = param;
             window.scrollTo({ top: 0, behavior: 'smooth' });
+            
+            // Update Active Nav Link Style
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-white'));
+            document.querySelectorAll(`.nav-link[onclick="navigate('${viewId}')"]`).forEach(link => link.classList.add('text-white'));
+
             renderView();
             updateNavbarAuth();
         }
 
         async function updateNavbarAuth() {
-            try {
-                appState.user = await api.req('/auth/me');
-            } catch (e) {
-                appState.user = null;
-            }
+            try { appState.user = await api.req('/auth/me'); } catch (e) { appState.user = null; }
 
-            const container = document.getElementById('auth-nav-container');
+            const desktopContainer = document.getElementById('auth-nav-container');
+            const mobileContainer = document.getElementById('mobile-auth-container');
+            
             if (appState.user) {
-                const isAdmin = appState.user.role === 'SUPER_ADMIN';
-                container.innerHTML = `
-                    <div class="flex items-center space-x-3">
-                        ${isAdmin ? `<button onclick="navigate('admin-dashboard')" class="px-3.5 py-2 rounded-xl bg-red-600/20 border border-red-500/50 text-red-400 font-bold text-xs shadow-lg shadow-red-500/10">Admin Panel</button>` : ''}
-                        <button onclick="navigate('my-websites')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>
-                        <button onclick="logout()" class="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm hover:text-white transition">Logout</button>
-                    </div>
-                `;
+                desktopContainer.innerHTML = `<button onclick="navigate('my-websites')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>`;
+                mobileContainer.innerHTML = `<button onclick="navigate('my-websites'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium">My Websites</button>`;
             } else {
-                container.innerHTML = `
-                    <button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800">
-                        Sign In
-                    </button>
-                `;
+                desktopContainer.innerHTML = `<button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800 active:scale-95">Sign In</button>`;
+                mobileContainer.innerHTML = `<button onclick="openLoginModal(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium">Sign In</button>`;
             }
         }
 
-        function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
-        function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
-        function openAdminLoginModal() { 
-            closeLoginModal();
-            document.getElementById('admin-login-modal').classList.remove('hidden'); 
-        }
-        function closeAdminLoginModal() { document.getElementById('admin-login-modal').classList.add('hidden'); }
-
-        async function submitAdminLogin() {
-            const email = document.getElementById('admin-email-input').value;
-            const password = document.getElementById('admin-pass-input').value;
-            try {
-                const res = await api.req('/auth/admin-login', 'POST', { email, password });
-                appState.user = res.user;
-                closeAdminLoginModal();
-                updateNavbarAuth();
-                navigate('admin-dashboard');
-            } catch (e) {
-                alert('Invalid admin credentials.');
-            }
-        }
-
-        async function logout() {
-            try {
-                await api.req('/auth/logout', 'POST');
-                appState.user = null;
-                updateNavbarAuth();
-                navigate('home');
-            } catch (e) {}
-        }
-
-        // --- Master View Renderer ---
         function renderView() {
             const main = document.getElementById('app-main');
-            if (appState.currentView === 'home') main.innerHTML = renderHomeView();
-            else if (appState.currentView === 'services') main.innerHTML = renderServicesView();
-            else if (appState.currentView === 'pricing') main.innerHTML = renderPricingView();
-            else if (appState.currentView === 'our-work') main.innerHTML = renderOurWorkView();
-            else if (appState.currentView === 'how-it-works') main.innerHTML = renderHowItWorksView();
-            else if (appState.currentView === 'customer-care') main.innerHTML = renderCustomerCareView();
-            else if (appState.currentView === 'track-status') renderTrackStatusView();
-            else if (appState.currentView === 'my-websites') renderMyWebsitesViewAsync(main);
-            else if (appState.currentView === 'project-detail') renderProjectDetailViewAsync(main, appState.currentProjectId);
-            else if (appState.currentView === 'admin-dashboard') renderAdminDashboardAsync(main);
-            else main.innerHTML = renderHomeView();
+            if (appState.currentView === 'home') {
+                main.innerHTML = renderHomeView();
+                setTimeout(() => { initTypewriter(); initWebCanvas3D(); initScrollReveals(); }, 100);
+            }
+            else if (appState.currentView === 'our-work') renderOurWorkViewAsync(main);
+            else if (appState.currentView === 'pricing') { main.innerHTML = renderPricingView(); setTimeout(initScrollReveals, 100); }
+            else if (appState.currentView === 'how-it-works') { main.innerHTML = renderHowItWorksView(); setTimeout(initScrollReveals, 100); }
+            else if (appState.currentView === 'customer-care') { main.innerHTML = renderCustomerCareView(); setTimeout(initScrollReveals, 100); }
+            else if (appState.currentView === 'track-status') renderTrackStatusView(main);
+            else { navigate('home'); }
         }
 
-        // --- High-Tech UI View Generators ---
         function renderHomeView() {
             return `
-                <section class="relative py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto text-center">
-                    <div class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-brand-600/10 border border-brand-500/20 text-brand-400 text-xs font-semibold uppercase tracking-wider mb-8 glow-effect">
-                        <span>Custom Website Development Platform</span>
-                    </div>
-                    <h1 class="text-4xl sm:text-7xl font-extrabold text-white tracking-tight max-w-5xl mx-auto leading-tight">
-                        Custom Websites. <span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-500 via-indigo-300 to-purple-400">Built Around Your Needs.</span>
-                    </h1>
-                    <p class="mt-6 text-lg sm:text-xl text-zinc-400 max-w-3xl mx-auto font-light leading-relaxed">
-                        Tell us what you need in simple words. We plan, design, and build a professional website tailored precisely to your business requirements.
-                    </p>
+                <div class="relative overflow-hidden">
+                    <div class="ambient-glow top-20 left-1/2 -translate-x-1/2"></div>
+                    <style>
+                        @keyframes text-shimmer { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+                        .text-gradient-animate { background: linear-gradient(90deg, #818cf8, #3b82f6, #a855f7, #818cf8); background-size: 200% auto; color: transparent; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: text-shimmer 6s ease-in-out infinite; display: inline-block; }
+                    </style>
 
-                    <div class="mt-12 max-w-3xl mx-auto glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl text-left">
-                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-3">Describe Your Website Requirements</label>
-                        <textarea id="hero-req-input" rows="4" class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-brand-500 transition resize-none" placeholder="e.g. I need a modern website for my dental clinic with service listings, doctor profiles, and an appointment booking contact form..."></textarea>
-                        <div class="mt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <span class="text-xs text-zinc-500">No technical knowledge required. We review every requirement.</span>
-                            <button onclick="submitWebsiteRequestFromHero()" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg shadow-brand-600/30">
-                                Submit Website Request →
-                            </button>
+                    <section class="relative pt-24 pb-16 px-6 lg:px-8 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center reveal">
+                        <div class="lg:col-span-7 text-center lg:text-left space-y-8">
+                            <div>
+                                <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight leading-[1.05] mb-6">
+                                    <span class="text-white block">Custom Websites.</span>
+                                    <span class="text-gradient-animate">Built Around Your Needs.</span>
+                                </h1>
+                                <p class="text-base sm:text-lg text-zinc-400 font-light leading-relaxed max-w-xl mx-auto lg:mx-0">
+                                    Tell us what you need in simple words. We plan, design, and build a professional website tailored precisely to your business requirements.
+                                </p>
+                            </div>
+
+                            <div class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl border border-zinc-800 text-left transition duration-300 hover:border-zinc-700/80">
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-brand-400 mb-3">Create Your Website Request</label>
+                                <textarea id="hero-req-input" rows="3" class="w-full bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 text-white text-base focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition duration-300 resize-none shadow-inner cursor-blink" placeholder=""></textarea>
+                                <div class="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                    <div class="text-xs text-zinc-500 max-w-xs space-y-1">
+                                        <p>Before submitting, tell us your business name, email address, and everything you want your website to include.</p>
+                                    </div>
+                                    <button onclick="submitWebsiteRequestFromHero()" class="w-full sm:w-auto px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition duration-200 shadow-xl shadow-brand-600/30 active:scale-95 whitespace-nowrap">
+                                        Submit Website Request
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                </section>
+
+                        <!-- 3D Engine Container -->
+                        <div class="lg:col-span-5 h-[380px] sm:h-[450px] w-full relative">
+                            <div class="absolute inset-0 glass-panel rounded-3xl overflow-hidden border border-zinc-800/80 shadow-2xl flex items-center justify-center">
+                                <div class="absolute top-5 left-5 z-20 flex items-center space-x-2 bg-zinc-950/80 backdrop-blur-md border border-zinc-800 px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
+                                    <div class="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></div>
+                                    <span class="text-[10px] font-bold text-zinc-300 uppercase tracking-widest">WEB4U 3D Engine</span>
+                                </div>
+                                <div id="canvas-container" class="w-full h-full cursor-grab active:cursor-grabbing"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="py-20 px-6 lg:px-8 max-w-7xl mx-auto border-t border-zinc-900 reveal">
+                        <div class="text-center max-w-2xl mx-auto mb-16">
+                            <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">WHY WEB4U?</span>
+                            <h2 class="text-3xl sm:text-4xl font-extrabold text-white mt-3 tracking-tight">Built Around You</h2>
+                            <p class="mt-3 text-zinc-400 text-sm">Simple website development without unnecessary technical complexity.</p>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                                <div>
+                                    <div class="w-12 h-12 rounded-2xl bg-brand-600/10 border border-brand-500/30 flex items-center justify-center text-brand-400 text-xl mb-6 shadow-md shadow-brand-500/10">🔄</div>
+                                    <h3 class="text-lg font-bold text-white mb-3">No Extra Modification Charges</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">Need changes after your website is launched? Web4U does not charge an extra modification fee as long as the requested changes remain within your current plan's scope.</p>
+                                </div>
+                            </div>
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                                <div>
+                                    <div class="w-12 h-12 rounded-2xl bg-brand-600/10 border border-brand-500/30 flex items-center justify-center text-brand-400 text-xl mb-6 shadow-md shadow-brand-500/10">🎨</div>
+                                    <h3 class="text-lg font-bold text-white mb-3">Custom Design</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">Your website is designed around your requirements, business and goals — not a one-size-fits-all template.</p>
+                                </div>
+                            </div>
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                                <div>
+                                    <div class="w-12 h-12 rounded-2xl bg-brand-600/10 border border-brand-500/30 flex items-center justify-center text-brand-400 text-xl mb-6 shadow-md shadow-brand-500/10">📦</div>
+                                    <h3 class="text-lg font-bold text-white mb-3">Get Your Code</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">You receive the complete website code with your applicable plan, along with your website link. You can use the code to host your website independently.</p>
+                                </div>
+                            </div>
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                                <div>
+                                    <div class="w-12 h-12 rounded-2xl bg-brand-600/10 border border-brand-500/30 flex items-center justify-center text-brand-400 text-xl mb-6 shadow-md shadow-brand-500/10">💡</div>
+                                    <h3 class="text-lg font-bold text-white mb-3">No Technical Knowledge Required</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">You don't need coding or technical knowledge to request a website. Just describe what you need in simple language.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
             `;
         }
 
-        function renderServicesView() {
-            return `
-                <div class="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div class="text-center max-w-3xl mx-auto mb-16">
-                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500">OUR SERVICES</span>
-                        <h1 class="text-4xl font-extrabold text-white mt-2">Custom Websites. Built Around Your Needs.</h1>
+        async function renderOurWorkViewAsync(container) {
+            container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading Our Work...</p></div>`;
+            try {
+                const portfolioItems = await api.req('/portfolio');
+                let html = `<div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">`;
+                
+                // Services Section Merged Here
+                html += `
+                    <div class="text-center max-w-3xl mx-auto mb-20 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">SERVICES</span>
+                        <h1 class="text-4xl sm:text-6xl font-extrabold text-white mt-4 tracking-tight">What Types of Websites We Make</h1>
+                        <p class="mt-4 text-zinc-400 text-lg">We build websites according to your business type, requirements, features and goals.</p>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        ${servicesDB.map((s, idx) => `
-                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between">
-                                <div><span class="text-4xl mb-4 block">${s.icon}</span><h3 class="text-xl font-bold text-white mb-3">${s.title}</h3><p class="text-sm text-zinc-400">${s.desc}</p></div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-24 reveal">
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <div>
+                                <h3 class="text-xl font-bold text-white mb-3">Websites for Local Shops</h3>
+                                <p class="text-sm text-zinc-400 leading-relaxed mb-6">Simple, professional websites for local shops and small businesses that need an online presence without advanced features.</p>
+                                <div class="pt-4 border-t border-zinc-800"><p class="text-xs font-semibold text-brand-400">Best for: local shops, small stores, basic business presence</p></div>
+                            </div>
+                        </div>
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <div>
+                                <h3 class="text-xl font-bold text-white mb-3">Websites for Moderate-Level Businesses</h3>
+                                <p class="text-sm text-zinc-400 leading-relaxed mb-6">More advanced websites for growing shops, clinics and businesses that need additional sections, structured information and useful features.</p>
+                                <div class="pt-4 border-t border-zinc-800"><p class="text-xs font-semibold text-brand-400">Can include: appointment systems, enquiry forms, service sections</p></div>
+                            </div>
+                        </div>
+                        <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <div>
+                                <h3 class="text-xl font-bold text-white mb-3">Business Professional Sites</h3>
+                                <p class="text-sm text-zinc-400 leading-relaxed mb-6">Full-fledged professional websites for serious businesses, developers and organizations that need a complete digital presence with advanced functionality.</p>
+                                <div class="pt-4 border-t border-zinc-800"><p class="text-xs font-semibold text-brand-400 mb-4">Advanced custom features, integrations and professional business architecture.</p></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-center max-w-3xl mx-auto mb-16 pt-10 border-t border-zinc-900/50 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">SUPPORT & DEVELOPMENT</span>
+                        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mt-4 tracking-tight">Built Beyond the First Launch</h2>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-32 reveal">
+                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <h3 class="text-lg font-bold text-white mb-3">Full Content Architecture</h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed mb-4">Not having any content architecture? We will make it for you for free.</p>
+                        </div>
+                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1 relative">
+                            <span class="absolute top-6 right-6 text-[10px] font-bold px-2 py-1 rounded bg-brand-600/20 text-brand-400 border border-brand-500/30">HTTPS + SSL</span>
+                            <h3 class="text-lg font-bold text-white mb-3 pr-16">Safe Deployment</h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed">Your website is protected with HTTPS and SSL provisioning.</p>
+                        </div>
+                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <h3 class="text-lg font-bold text-white mb-3">Continuous Support</h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed mb-4">Dedicated upgrades and improvements suggested by you, provided for free within your current plan's scope.</p>
+                        </div>
+                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
+                            <h3 class="text-lg font-bold text-white mb-3">Customer Care</h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed mb-6">Get in trouble? Contact our customer care team and we will help.</p>
+                            <a href="mailto:keshvisingh2007@gmail.com" class="text-sm font-bold text-brand-400 hover:text-brand-300 transition">keshvisingh2007@gmail.com</a>
+                        </div>
+                    </div>
+                `;
+
+                // Portfolio Section
+                html += `
+                    <div class="text-center max-w-3xl mx-auto mb-20 pt-10 border-t border-zinc-900/50 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">PORTFOLIO</span>
+                        <h2 class="text-4xl sm:text-6xl font-extrabold text-white mt-4 tracking-tight">Explore Our Recent Projects</h2>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-10 reveal">
+                        ${portfolioItems.map(item => `
+                            <div class="glass-panel rounded-3xl overflow-hidden group transition duration-300 hover:border-zinc-700">
+                                <div class="overflow-hidden aspect-video bg-zinc-900">
+                                    <img src="${item.image_url}" alt="${item.title}" class="w-full h-full object-cover group-hover:scale-105 transition duration-500 opacity-90 group-hover:opacity-100">
+                                </div>
+                                <div class="p-8">
+                                    <span class="text-xs font-semibold text-brand-400 uppercase tracking-wider">${item.category}</span>
+                                    <h3 class="text-2xl font-bold text-white mt-2 mb-3">${item.title}</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">${item.description}</p>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
-                </div>
-            `;
+                </div>`;
+                
+                container.innerHTML = html;
+                setTimeout(initScrollReveals, 100);
+            } catch(e) {
+                container.innerHTML = `<div class="py-32 text-center text-white font-bold">Failed to load projects.</div>`;
+            }
         }
 
         function renderPricingView() {
             return `
-                <div class="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div class="text-center max-w-3xl mx-auto mb-16">
-                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500">PRICING</span>
-                        <h1 class="text-4xl font-extrabold text-white mt-2">Choose the Right Website Level</h1>
+                <div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">
+                    <div class="text-center max-w-3xl mx-auto mb-16 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">PRICING</span>
+                        <h1 class="text-4xl sm:text-6xl font-extrabold text-white mt-4 tracking-tight">Pricing Plans</h1>
+                        <p class="mt-4 text-zinc-400 text-lg">Web4U reviews your requirements and recommends the plan that best fits your website.</p>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch mb-20 reveal">
                         ${pricingDB.map(p => `
-                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between relative">
-                                <div><h3 class="text-lg font-bold text-white mb-2">${p.name}</h3><div class="text-4xl font-extrabold text-white mb-6">${p.price}</div><ul class="space-y-3 mb-8">${p.highlights.map(h => `<li class="text-sm text-zinc-300">✓ ${h}</li>`).join('')}</ul></div>
-                                <button onclick="navigate('home')" class="w-full py-3.5 rounded-xl bg-zinc-800 hover:bg-brand-600 text-white font-semibold text-sm transition">Select Plan</button>
+                            <div class="glass-panel rounded-3xl p-8 flex flex-col justify-between relative transition duration-300 ${p.badge ? 'border-brand-500 shadow-xl bg-zinc-900/90 transform md:-translate-y-2' : 'hover:border-zinc-700'}">
+                                ${p.badge ? `<div class="absolute -top-3 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full bg-brand-600 text-white text-xs font-bold shadow-lg">${p.badge}</div>` : ''}
+                                <div>
+                                    <h3 class="text-lg font-bold text-white mb-2 uppercase tracking-wide">${p.name}</h3>
+                                    <p class="text-sm text-zinc-400 mb-6 min-h-[48px]">${p.desc}</p>
+                                    <div class="mb-1 flex items-baseline space-x-2">
+                                        <span class="text-4xl font-extrabold text-white">${p.price}</span>
+                                        ${p.monthlyPrice ? `<span class="text-sm text-purple-400 font-bold">${p.monthlyPrice}</span>` : ''}
+                                    </div>
+                                    <div class="text-xs text-brand-400 font-bold mb-8 uppercase tracking-wider">${p.billing}</div>
+                                    <div class="mb-6">
+                                        <h4 class="text-xs font-bold text-white uppercase tracking-wider border-b border-zinc-800 pb-2 mb-4">What's Included</h4>
+                                        <ul class="space-y-3">
+                                            ${p.included.map(h => `<li class="text-sm text-zinc-300 flex items-start space-x-3"><span class="text-brand-400 font-bold flex-shrink-0 mt-0.5">✓</span><span class="leading-snug">${h}</span></li>`).join('')}
+                                        </ul>
+                                    </div>
+                                    <div class="mb-8">
+                                        <h4 class="text-xs font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-800 pb-2 mb-4">What's Not Included</h4>
+                                        <ul class="space-y-3">
+                                            ${p.notIncluded.map(h => `<li class="text-sm text-zinc-500 flex items-start space-x-3"><span class="text-zinc-600 font-bold flex-shrink-0 mt-0.5">✕</span><span class="leading-snug">${h}</span></li>`).join('')}
+                                        </ul>
+                                    </div>
+                                    ${p.securityNotes ? `<div class="bg-zinc-950 rounded-xl p-4 border border-zinc-800/60 mb-8 space-y-2">${p.securityNotes.map(n => `<p class="text-[11px] text-zinc-400 leading-relaxed">${n}</p>`).join('')}</div>` : ''}
+                                </div>
+                                <button onclick="navigate('home')" class="w-full py-3.5 rounded-xl ${p.badge ? 'bg-brand-600 hover:bg-brand-500' : 'bg-zinc-800 hover:bg-zinc-700'} text-white font-semibold text-sm transition">Request Website</button>
                             </div>
                         `).join('')}
                     </div>
+
+                    <!-- Comparison Table -->
+                    <div class="mt-20 max-w-7xl mx-auto reveal">
+                        <h2 class="text-3xl font-extrabold text-white mb-10 text-center tracking-tight">Compare Plan Features</h2>
+                        <div class="overflow-x-auto pb-6">
+                            <table class="w-full text-left border-collapse min-w-[800px]">
+                                <thead>
+                                    <tr class="border-b-2 border-zinc-800">
+                                        <th class="py-6 px-6 w-1/4 sticky left-0 bg-zinc-950 z-10 font-bold text-zinc-400 text-sm uppercase tracking-wider">Feature</th>
+                                        <th class="py-6 px-6 w-1/4 text-center text-lg font-bold text-white">Basic Website</th>
+                                        <th class="py-6 px-6 w-1/4 text-center text-lg font-bold text-brand-400">Moderate Website</th>
+                                        <th class="py-6 px-6 w-1/4 text-center text-lg font-bold text-purple-400">Top-Level Website</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-zinc-800/60">
+                                    ${comparisonTable.map(row => `
+                                        <tr class="hover:bg-zinc-900/30 transition duration-150">
+                                            <td class="py-6 px-6 sticky left-0 bg-zinc-950 z-10 border-r border-zinc-800/30">
+                                                <div class="font-bold text-white text-sm">${row.feature}</div>
+                                                ${row.desc ? `<div class="text-xs text-zinc-500 mt-1 pr-4 leading-relaxed">${row.desc}</div>` : ''}
+                                            </td>
+                                            <td class="py-6 px-6 text-center text-zinc-300 text-sm font-medium align-middle">${row.basic}</td>
+                                            <td class="py-6 px-6 text-center text-zinc-200 text-sm font-medium align-middle bg-brand-900/5">${row.mod}</td>
+                                            <td class="py-6 px-6 text-center text-white text-sm font-bold align-middle bg-purple-900/5 border-l border-purple-500/10">${row.top}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mt-24 max-w-4xl mx-auto reveal">
+                        <div class="glass-panel rounded-3xl p-8 sm:p-10 border border-brand-500/20 bg-gradient-to-b from-brand-900/10 to-transparent relative">
+                            <span class="text-[10px] font-bold uppercase tracking-widest text-brand-400 px-3 py-1 rounded-full bg-brand-500/10 mb-4 inline-block">IMPORTANT</span>
+                            <h3 class="text-2xl font-bold text-white mb-6">Ownership, Hosting, SEO & Advertising</h3>
+                            <div class="space-y-4 text-sm text-zinc-300 leading-relaxed">
+                                <p>Web4U focuses on website design and development.</p>
+                                <p>If you want independent ownership and hosting of your website, you can take the complete website code provided with your applicable plan and deploy it yourself using your own hosting account.</p>
+                                <p>Search Engine Optimization (SEO) and website advertising are not included in any Web4U plan.</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             `;
         }
 
-        function renderOurWorkView() { return `<div class="py-20 text-center text-zinc-400">Portfolio View Loaded</div>`; }
-        function renderHowItWorksView() { return `<div class="py-20 text-center text-zinc-400">How It Works View Loaded</div>`; }
-        function renderCustomerCareView() { return `<div class="py-20 text-center text-zinc-400">Customer Care View Loaded</div>`; }
-        async function renderTrackStatusView() {
-            const container = document.getElementById('app-main');
-
-            container.innerHTML = `
-                <div class="py-20 max-w-5xl mx-auto px-4">
-                    <div class="text-center mb-12">
-                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500">
-                            PROJECT TRACKING
-                        </span>
-                        <h1 class="text-4xl font-extrabold text-white mt-2">
-                            Track Your Website
-                        </h1>
-                        <p class="text-zinc-400 mt-3">
-                            Follow your website request from submission to launch.
-                        </p>
+        function renderHowItWorksView() {
+            return `
+                <div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">
+                    <div class="text-center max-w-3xl mx-auto mb-20 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">HOW IT WORKS</span>
+                        <h1 class="text-4xl sm:text-6xl font-extrabold text-white mt-4 tracking-tight">From Your Request to Your Live Website</h1>
+                    </div>
+                    
+                    <div class="max-w-4xl mx-auto relative">
+                        <div class="absolute left-8 md:left-12 top-10 bottom-10 w-0.5 bg-zinc-800 hidden sm:block z-0"></div>
+                        <div class="space-y-8">
+                            ${howItWorksDB.map((s, idx) => `
+                                <div class="glass-panel rounded-3xl p-6 sm:p-8 flex flex-row items-start gap-6 relative z-10 reveal group" style="transition-delay: ${idx * 100}ms">
+                                    <div class="flex-shrink-0 mt-1">
+                                        <div class="w-12 h-12 md:w-16 md:h-16 rounded-2xl bg-zinc-900 border border-brand-500/30 flex items-center justify-center font-bold text-brand-400 text-xl md:text-2xl shadow-lg shadow-brand-500/10 group-hover:bg-brand-600/20 transition duration-300">${s.num}</div>
+                                    </div>
+                                    <div class="pt-1">
+                                        <h3 class="text-xl md:text-2xl font-bold text-white mb-3">${s.title}</h3>
+                                        <p class="text-sm text-zinc-400 leading-relaxed">${s.desc}</p>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
 
-                    <div id="track-status-content">
-                        <div class="text-center text-zinc-500 py-12">
-                            Loading your project...
+                    <div class="max-w-4xl mx-auto mt-16 reveal">
+                        <div class="glass-panel rounded-3xl p-10 text-center border border-brand-500/30 bg-gradient-to-b from-brand-900/10 to-transparent">
+                            <h3 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Need Changes After Launch?</h3>
+                            <p class="text-zinc-300 text-sm leading-relaxed max-w-2xl mx-auto mb-8">Website modifications are free for a lifetime as long as the requested modification remains within the features and limits of your current plan.</p>
+                            <button onclick="navigate('track-status')" class="px-8 py-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-xl active:scale-95">
+                                Track Your Website →
+                            </button>
                         </div>
                     </div>
                 </div>
             `;
+        }
 
-            try {
-                const projects = await api.req('/customer/projects');
+        function renderCustomerCareView() {
+            return `
+                <div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">
+                    <div class="text-center max-w-3xl mx-auto mb-20 reveal">
+                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">CUSTOMER CARE</span>
+                        <h1 class="text-4xl sm:text-6xl font-extrabold text-white mt-4 tracking-tight">Get 24/7 Help</h1>
+                        <p class="mt-6 text-lg text-zinc-400 max-w-xl mx-auto leading-relaxed">Email us on <a href="mailto:keshvisingh2007@gmail.com" class="text-brand-400 hover:text-brand-300 transition font-bold">keshvisingh2007@gmail.com</a> and get your issue resolved.</p>
+                    </div>
 
-                if (!projects || !projects.length) {
-                    document.getElementById('track-status-content').innerHTML = `
-                        <div class="glass-panel rounded-3xl p-10 text-center">
-                            <div class="text-4xl mb-4">📋</div>
-                            <h2 class="text-2xl font-bold text-white mb-3">
-                                No Website Request Yet
-                            </h2>
-                            <p class="text-zinc-400 mb-6">
-                                Submit a website request to start tracking your project.
-                            </p>
-                            <button
-                                onclick="navigate('home')"
-                                class="px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold">
-                                Request a Website
-                            </button>
-                        </div>
-                    `;
-                    return;
-                }
-
-                const project = projects[0];
-
-                const status = String(project.status || 'REQUESTED').toUpperCase();
-
-                const steps = [
-                    {
-                        key: 'REQUESTED',
-                        title: 'Request Submitted',
-                        description: 'Your website requirements have been received.'
-                    },
-                    {
-                        key: 'UNDER REVIEW',
-                        title: 'Under Review',
-                        description: 'Our team is reviewing your requirements.'
-                    },
-                    {
-                        key: 'SCOPE CONFIRMED',
-                        title: 'Scope & Pricing',
-                        description: 'Project scope and pricing are being finalized.'
-                    },
-                    {
-                        key: 'PAYMENT PENDING',
-                        title: 'Payment',
-                        description: 'Payment is required before development begins.'
-                    },
-                    {
-                        key: 'IN DEVELOPMENT',
-                        title: 'Development',
-                        description: 'Your website is being built.'
-                    },
-                    {
-                        key: 'PREVIEW',
-                        title: 'Preview & Review',
-                        description: 'Your website preview is ready for review.'
-                    },
-                    {
-                        key: 'LIVE',
-                        title: 'Website Live',
-                        description: 'Your website has been published.'
-                    }
-                ];
-
-                let currentIndex = steps.findIndex(step =>
-                    status.includes(step.key)
-                );
-
-                if (currentIndex === -1) {
-                    currentIndex = 0;
-                }
-
-                document.getElementById('track-status-content').innerHTML = `
-                    <div class="glass-panel rounded-3xl p-6 sm:p-8 mb-8">
-
-                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-
-                            <div>
-                                <p class="text-xs uppercase tracking-widest text-zinc-500">
-                                    Request ID
-                                </p>
-
-                                <p class="font-mono text-brand-400 text-lg mt-1">
-                                    ${project.request_id || 'N/A'}
-                                </p>
-                            </div>
-
-                            <div class="px-4 py-2 rounded-xl bg-brand-600/10 border border-brand-500/30">
-                                <span class="text-xs text-brand-300 uppercase tracking-wider">
-                                    Current Status
-                                </span>
-                                <div class="text-white font-bold mt-1">
-                                    ${status}
+                    <div class="max-w-3xl mx-auto space-y-4 mb-20 reveal">
+                        <h2 class="text-2xl font-bold text-white mb-6">Frequently Asked Questions</h2>
+                        ${faqDB.map((f, idx) => `
+                            <div class="glass-panel rounded-2xl border border-zinc-800 overflow-hidden">
+                                <button onclick="toggleFAQ(${idx})" class="w-full text-left px-6 py-5 flex items-center justify-between hover:bg-zinc-800/30 transition focus:outline-none">
+                                    <div class="pr-4">
+                                        <span class="text-[10px] font-bold text-brand-500 uppercase tracking-wider block mb-1">${f.cat}</span>
+                                        <span class="font-bold text-white text-base">${f.q}</span>
+                                    </div>
+                                    <svg id="faq-icon-${idx}" class="w-5 h-5 text-zinc-500 flex-shrink-0 accordion-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </button>
+                                <div id="faq-content-${idx}" class="accordion-content bg-zinc-900/50">
+                                    <div class="px-6 pb-6 text-sm text-zinc-300 leading-relaxed">${f.a}</div>
                                 </div>
                             </div>
-
-                        </div>
-
-                        <h2 class="text-2xl font-bold text-white mb-8">
-                            ${project.website_name || 'Your Website'}
-                        </h2>
-
-                        <div class="space-y-6">
-
-                            ${steps.map((step, index) => {
-
-                                const completed = index < currentIndex;
-                                const current = index === currentIndex;
-
-                                return `
-                                    <div class="flex gap-4">
-
-                                        <div class="flex flex-col items-center">
-
-                                            <div class="
-                                                w-9 h-9 rounded-full
-                                                flex items-center justify-center
-                                                font-bold text-sm
-                                                ${
-                                                    completed
-                                                        ? 'bg-green-500 text-white'
-                                                        : current
-                                                        ? 'bg-brand-600 text-white ring-4 ring-brand-500/20'
-                                                        : 'bg-zinc-800 text-zinc-500 border border-zinc-700'
-                                                }
-                                            ">
-                                                ${completed ? '✓' : index + 1}
-                                            </div>
-
-                                            ${
-                                                index < steps.length - 1
-                                                    ? `<div class="w-px h-12 ${
-                                                          completed
-                                                              ? 'bg-green-500'
-                                                              : 'bg-zinc-800'
-                                                      }"></div>`
-                                                    : ''
-                                            }
-
-                                        </div>
-
-                                        <div class="pb-4">
-
-                                            <h3 class="${
-                                                completed || current
-                                                    ? 'text-white'
-                                                    : 'text-zinc-500'
-                                            } font-semibold">
-
-                                                ${step.title}
-
-                                                ${
-                                                    current
-                                                        ? `<span class="ml-2 text-xs text-brand-400">
-                                                            CURRENT
-                                                           </span>`
-                                                        : ''
-                                                }
-
-                                            </h3>
-
-                                            <p class="text-sm text-zinc-500 mt-1">
-                                                ${step.description}
-                                            </p>
-
-                                        </div>
-
-                                    </div>
-                                `;
-
-                            }).join('')}
-
-                        </div>
-
-                        <div class="mt-8 pt-6 border-t border-zinc-800">
-
-                            <button
-                                onclick="navigate('project-detail', ${project.id})"
-                                class="px-5 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-semibold">
-
-                                Open Project Workspace →
-
-                            </button>
-
-                        </div>
-
+                        `).join('')}
                     </div>
-                `;
-
-            } catch (e) {
-
-                document.getElementById('track-status-content').innerHTML = `
-                    <div class="glass-panel rounded-3xl p-10 text-center">
-
-                        <div class="text-4xl mb-4">🔐</div>
-
-                        <h2 class="text-2xl font-bold text-white mb-3">
-                            Sign In Required
-                        </h2>
-
-                        <p class="text-zinc-400 mb-6">
-                            Please sign in with Google to view your project status.
-                        </p>
-
-                        <button
-                            onclick="openLoginModal()"
-                            class="px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold">
-
-                            Sign In with Google
-
-                        </button>
-
+                    
+                    <div class="max-w-3xl mx-auto reveal">
+                        <div class="glass-panel rounded-3xl p-10 text-center border border-zinc-800">
+                            <h2 class="text-3xl font-extrabold text-white mb-4">Track Progress</h2>
+                            <p class="text-zinc-400 mb-8">View live updates and communicate via your project workspace.</p>
+                            <button onclick="navigate('track-status')" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg active:scale-95">Track Your Website</button>
+                        </div>
                     </div>
-                `;
-            }
+                </div>
+            `;
         }
-        async function renderMyWebsitesViewAsync(container) {
+
+        async function renderTrackStatusView(container) {
+            container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading project workspace...</p></div>`;
             try {
                 const projects = await api.req('/customer/projects');
-                if (!projects.length) {
-                    container.innerHTML = `<div class="py-24 text-center"><h2 class="text-2xl font-bold text-white mb-4">No Projects Yet</h2><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Request Website</button></div>`;
+                if (!projects || !projects.length) {
+                    container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">No Website Request Yet</h2><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Request a Website</button></div>`;
                     return;
                 }
-                container.innerHTML = `<div class="py-20 max-w-7xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-8">Your Websites</h1><div class="grid grid-cols-1 md:grid-cols-2 gap-6">${projects.map(p => `<div class="glass-panel p-6 rounded-3xl"><span class="text-xs font-mono text-brand-400">${p.request_id}</span><h3 class="text-xl font-bold text-white mt-1 mb-4">${p.website_name}</h3><button onclick="navigate('project-detail', ${p.id})" class="px-4 py-2 bg-zinc-800 text-white rounded-xl text-sm font-semibold">Open Workspace</button></div>`).join('')}</div></div>`;
+                const p = projects[0];
+                container.innerHTML = `<div class="py-20 max-w-5xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-4">${p.website_name || 'Your Project'}</h1><p class="text-zinc-400 mb-6">Status: <span class="text-brand-400 font-bold">${p.status || 'IN DEVELOPMENT'}</span></p><div class="glass-panel p-6 rounded-3xl"><h3 class="text-lg font-bold text-white mb-2">Workspace</h3><p class="text-sm text-zinc-300">Your portal is currently syncing...</p></div></div>`;
             } catch (e) {
-                container.innerHTML = `<div class="py-20 text-center text-red-400">Please sign in to view your websites.</div>`;
+                container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">Sign In Required</h2><button onclick="openLoginModal()" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Sign In with Google</button></div>`;
             }
         }
 
-        async function renderProjectDetailViewAsync(container, projectId) {
-            try {
-                const p = await api.req(`/customer/projects/${projectId}`);
-                container.innerHTML = `<div class="py-20 max-w-5xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-4">${p.website_name}</h1><p class="text-zinc-400 mb-6">Status: <span class="text-white font-bold">${p.status}</span></p><div class="glass-panel p-6 rounded-3xl"><h3 class="text-lg font-bold text-white mb-2">Original Requirements</h3><p class="text-sm text-zinc-300">${p.original_requirements}</p></div></div>`;
-            } catch (e) {
-                container.innerHTML = `<div class="py-20 text-center text-red-400">Failed to load project workspace.</div>`;
-            }
-        }
-
-        async function renderAdminDashboardAsync(container) {
-            try {
-                const projects = await api.req('/admin/projects');
-                container.innerHTML = `<div class="py-20 max-w-7xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-8">Super Admin Command Center</h1><div class="glass-panel rounded-3xl overflow-hidden"><table class="w-full text-left"><thead><tr class="border-b border-zinc-800 text-xs text-zinc-400 uppercase bg-zinc-950/50"><th class="p-4">Req ID</th><th class="p-4">Customer</th><th class="p-4">Website</th><th class="p-4">Status</th></tr></thead><tbody class="divide-y divide-zinc-800 text-sm">${projects.map(pr => `<tr class="hover:bg-zinc-800/30"><td class="p-4 font-mono text-brand-400">${pr.request_id}</td><td class="p-4 text-white">${pr.customer_name}</td><td class="p-4 text-zinc-300">${pr.website_name}</td><td class="p-4 text-zinc-300">${pr.status}</td></tr>`).join('')}</tbody></table></div></div>`;
-            } catch (e) {
-                container.innerHTML = `<div class="py-20 text-center text-red-400">Admin authorization required.</div>`;
-            }
-        }
-
-        async function submitWebsiteRequestFromHero() {
+        function submitWebsiteRequestFromHero() {
             const reqs = document.getElementById('hero-req-input').value;
-            if (!reqs.trim()) return alert('Please enter requirements.');
-            try {
-                await api.req('/projects', 'POST', { requirements: reqs });
-                alert('Website request submitted successfully!');
-                navigate('my-websites');
-            } catch (e) {
-                alert('Please sign in first.');
-                openLoginModal();
+            if (!reqs.trim()) return alert('Please enter your project requirements.');
+            openLoginModal();
+        }
+
+        let webCanvasAnimId = null;
+        let globalResizeHandler = null;
+        let globalMouseMoveHandler = null;
+        let globalTouchMoveHandler = null;
+        let activeRenderer = null;
+        let activeScene = null;
+
+        function cleanupPreviewEngine() {
+            if (webCanvasAnimId) cancelAnimationFrame(webCanvasAnimId);
+            if (globalResizeHandler) window.removeEventListener('resize', globalResizeHandler);
+            if (globalMouseMoveHandler) window.removeEventListener('mousemove', globalMouseMoveHandler);
+            if (globalTouchMoveHandler) window.removeEventListener('touchmove', globalTouchMoveHandler);
+            
+            webCanvasAnimId = null; globalResizeHandler = null; 
+            globalMouseMoveHandler = null; globalTouchMoveHandler = null;
+            
+            if (activeScene) {
+                activeScene.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                        else child.material.dispose();
+                    }
+                });
+                activeScene = null;
+            }
+            if (activeRenderer) {
+                activeRenderer.dispose();
+                activeRenderer = null;
             }
         }
 
-        window.onload = () => { updateNavbarAuth(); renderView(); };
+        function initWebCanvas3D() {
+            cleanupPreviewEngine();
+
+            const container = document.getElementById('canvas-container');
+            if (!container) return;
+
+            container.innerHTML = '<canvas id="web-canvas"></canvas>';
+            const canvas = document.getElementById('web-canvas');
+
+            const scene = new THREE.Scene();
+            activeScene = scene;
+
+            const camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 0.5, 7.5);
+
+            const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            activeRenderer = renderer;
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0x6366f1, 5.0, 50);
+            pointLight.position.set(6, 6, 6);
+            scene.add(pointLight);
+
+            const laptopGroup = new THREE.Group();
+            scene.add(laptopGroup);
+
+            const baseGeo = new THREE.BoxGeometry(4.2, 0.12, 2.8);
+            const baseMat = new THREE.MeshStandardMaterial({ color: 0x27272a, roughness: 0.3, metalness: 0.9 });
+            const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+            baseMesh.position.set(0, -1.0, 0.6);
+            baseMesh.rotation.x = 0.05;
+            laptopGroup.add(baseMesh);
+
+            const trackpadGeo = new THREE.BoxGeometry(1.0, 0.01, 0.6);
+            const trackpadMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.5 });
+            const trackpadMesh = new THREE.Mesh(trackpadGeo, trackpadMat);
+            trackpadMesh.position.set(0, -0.93, 1.3);
+            laptopGroup.add(trackpadMesh);
+
+            const screenGroup = new THREE.Group();
+            screenGroup.position.set(0, -1.0, -0.8);
+            screenGroup.rotation.x = -0.35; 
+            laptopGroup.add(screenGroup);
+
+            const lidGeo = new THREE.BoxGeometry(4.2, 2.6, 0.08);
+            const lidMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.2, metalness: 0.85 });
+            const lidMesh = new THREE.Mesh(lidGeo, lidMat);
+            lidMesh.position.set(0, 1.3, 0);
+            screenGroup.add(lidMesh);
+
+            // Screen Display Area (Website View inside Laptop Screen)
+            const displayGeo = new THREE.BoxGeometry(3.9, 2.3, 0.02);
+            const displayMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.1, emissive: 0x1e1b4b, emissiveIntensity: 0.4 });
+            const displayMesh = new THREE.Mesh(displayGeo, displayMat);
+            displayMesh.position.set(0, 1.3, 0.045);
+            screenGroup.add(displayMesh);
+
+            // Helper to create WEB4U branding textures dynamically
+            function createBrandTexture(isBack) {
+                const c = document.createElement('canvas');
+                c.width = 1024; c.height = 512;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = 'transparent';
+                ctx.fillRect(0, 0, 1024, 512);
+                
+                ctx.font = 'bold 160px "Plus Jakarta Sans", sans-serif';
+                ctx.textBaseline = 'middle';
+                
+                const text1 = "WEB";
+                const text2 = "4U";
+                const w1 = ctx.measureText(text1).width;
+                const w2 = ctx.measureText(text2).width;
+                const totalW = w1 + w2;
+                const startX = (1024 - totalW) / 2;
+                
+                if (!isBack) {
+                    ctx.shadowColor = '#4f46e5';
+                    ctx.shadowBlur = 40; 
+                }
+                
+                ctx.fillStyle = isBack ? '#a1a1aa' : '#ffffff'; 
+                ctx.fillText(text1, startX, 512/2);
+                ctx.fillStyle = '#6366f1'; 
+                ctx.fillText(text2, startX + w1, 512/2);
+                
+                const tex = new THREE.CanvasTexture(c);
+                if (renderer.capabilities) tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                return tex;
+            }
+
+            // Back Lid Branding
+            const backBrandGeo = new THREE.PlaneGeometry(2.4, 1.2);
+            const backBrandMat = new THREE.MeshBasicMaterial({ map: createBrandTexture(true), transparent: true });
+            const backBrandMesh = new THREE.Mesh(backBrandGeo, backBrandMat);
+            backBrandMesh.position.set(0, 1.3, -0.041);
+            backBrandMesh.rotation.y = Math.PI; // Face outwards
+            screenGroup.add(backBrandMesh);
+
+            // Front Screen Branding (Centered Blank Full Page Logo)
+            const screenContentGroup = new THREE.Group();
+            screenContentGroup.position.set(0, 1.3, 0.056); 
+            screenGroup.add(screenContentGroup);
+
+            const frontBrandGeo = new THREE.PlaneGeometry(3.6, 1.8);
+            const frontBrandMat = new THREE.MeshBasicMaterial({ map: createBrandTexture(false), transparent: true });
+            const frontBrandMesh = new THREE.Mesh(frontBrandGeo, frontBrandMat);
+            screenContentGroup.add(frontBrandMesh);
+
+            // Resize handler
+            globalResizeHandler = () => {
+                if (!container || !renderer) return;
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            };
+            window.addEventListener('resize', globalResizeHandler);
+
+            // Interactive Mouse/Touch Rotation Controls
+            let isDragging = false;
+            let previousMousePosition = { x: 0, y: 0 };
+            let targetRotY = 0;
+            let targetRotX = 0;
+
+            globalMouseMoveHandler = (e) => {
+                if (isDragging) {
+                    const deltaX = e.offsetX - previousMousePosition.x;
+                    const deltaY = e.offsetY - previousMousePosition.y;
+                    targetRotY += deltaX * 0.01;
+                    targetRotX += deltaY * 0.01;
+                    previousMousePosition = { x: e.offsetX, y: e.offsetY };
+                }
+            };
+
+            renderer.domElement.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                previousMousePosition = { x: e.offsetX, y: e.offsetY };
+            });
+            
+            window.addEventListener('mouseup', () => { isDragging = false; });
+            renderer.domElement.addEventListener('mousemove', globalMouseMoveHandler);
+
+            // Touch support
+            globalTouchMoveHandler = (e) => {
+                if (!isDragging || !e.touches.length) return;
+                const touch = e.touches[0];
+                const rect = renderer.domElement.getBoundingClientRect();
+                const offsetX = touch.clientX - rect.left;
+                const offsetY = touch.clientY - rect.top;
+                const deltaX = offsetX - previousMousePosition.x;
+                const deltaY = offsetY - previousMousePosition.y;
+                targetRotY += deltaX * 0.01;
+                targetRotX += deltaY * 0.01;
+                previousMousePosition = { x: offsetX, y: offsetY };
+            };
+            
+            renderer.domElement.addEventListener('touchstart', (e) => {
+                if(!e.touches.length) return;
+                isDragging = true;
+                const rect = renderer.domElement.getBoundingClientRect();
+                previousMousePosition = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+            }, {passive: true});
+            
+            window.addEventListener('touchend', () => { isDragging = false; });
+            renderer.domElement.addEventListener('touchmove', globalTouchMoveHandler, {passive: true});
+
+            // Animation Loop
+            let clock = new THREE.Clock();
+            function animate() {
+                webCanvasAnimId = requestAnimationFrame(animate);
+                let elapsedTime = clock.getElapsedTime();
+
+                if (!isDragging) {
+                    targetRotY += 0.035; // increased rotation speed
+                    targetRotX += (Math.sin(elapsedTime * 0.6) * 0.15 - targetRotX) * 0.05;
+                }
+
+                laptopGroup.rotation.y += (targetRotY - laptopGroup.rotation.y) * 0.1;
+                laptopGroup.rotation.x += (targetRotX - laptopGroup.rotation.x) * 0.1;
+                laptopGroup.position.y = Math.sin(elapsedTime * 1.5) * 0.1;
+
+                renderer.render(scene, camera);
+            }
+            animate();
+        }
+
+        // Animated Typewriter System
+        let typewriterTimer = null;
+        let isUserTyping = false;
+        const heroIdeas = ["Describe your website...", "Tell us about your business...", "What kind of website do you need?"];
+
+        function initTypewriter() {
+            const textarea = document.getElementById('hero-req-input');
+            if (!textarea) return;
+            textarea.addEventListener('focus', () => { isUserTyping = true; clearTimeout(typewriterTimer); textarea.placeholder = ''; });
+            textarea.addEventListener('input', () => { isUserTyping = true; clearTimeout(typewriterTimer); });
+            textarea.addEventListener('blur', () => { if (!textarea.value.trim()) { isUserTyping = false; runTypewriterLoop(0, 0, true); } });
+            if (!isUserTyping && !textarea.value) runTypewriterLoop(0, 0, true);
+        }
+
+        function runTypewriterLoop(ideaIndex, charIndex, isTyping) {
+            const textarea = document.getElementById('hero-req-input');
+            if (!textarea || isUserTyping) return;
+            const currentText = heroIdeas[ideaIndex];
+
+            if (isTyping) {
+                if (charIndex <= currentText.length) {
+                    textarea.placeholder = currentText.substring(0, charIndex);
+                    typewriterTimer = setTimeout(() => runTypewriterLoop(ideaIndex, charIndex + 1, true), 45);
+                } else {
+                    typewriterTimer = setTimeout(() => runTypewriterLoop(ideaIndex, currentText.length, false), 2400);
+                }
+            } else {
+                if (charIndex >= 0) {
+                    textarea.placeholder = currentText.substring(0, charIndex);
+                    typewriterTimer = setTimeout(() => runTypewriterLoop(ideaIndex, charIndex - 1, false), 20);
+                } else {
+                    const nextIndex = (ideaIndex + 1) % heroIdeas.length;
+                    typewriterTimer = setTimeout(() => runTypewriterLoop(nextIndex, 0, true), 400);
+                }
+            }
+        }
+
+        // Init
+        window.onload = () => {
+            updateNavbarAuth();
+            navigate('home');
+        };
     </script>
 </body>
 </html>
