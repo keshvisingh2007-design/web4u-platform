@@ -139,6 +139,7 @@
         </div>
         <div class="max-w-7xl mx-auto pt-8 border-t border-zinc-900/80 flex flex-col sm:flex-row justify-between items-center text-xs text-zinc-500">
             <p>© 2026 WEB4U. All rights reserved.</p>
+            <button onclick="navigate('admin-login')" class="text-zinc-600 hover:text-zinc-400 transition mt-4 sm:mt-0">Admin Portal</button>
         </div>
     </footer>
 
@@ -308,6 +309,19 @@
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-white'));
             document.querySelectorAll(`.nav-link[onclick="navigate('${viewId}')"]`).forEach(link => link.classList.add('text-white'));
 
+            // Check authorization state before entering admin dashboard
+            if (viewId === 'admin-dashboard') {
+                try {
+                    const user = await api.req('/auth/me');
+                    appState.user = user;
+                    if (!user || user.role !== 'SUPER_ADMIN') {
+                        appState.currentView = 'admin-login';
+                    }
+                } catch (e) {
+                    appState.currentView = 'admin-login';
+                }
+            }
+
             renderView();
             updateNavbarAuth();
         }
@@ -333,7 +347,7 @@
                 appState.user = null; 
             }
 
-            if (appState.user && !isSubmittingPendingRequest) {
+            if (appState.user && !isSubmittingPendingRequest && appState.user.role !== 'SUPER_ADMIN') {
                 const pendingReq = sessionStorage.getItem('pendingWebsiteRequest');
                 if (pendingReq) {
                     isSubmittingPendingRequest = true;
@@ -355,14 +369,25 @@
             const mobileContainer = document.getElementById('mobile-auth-container');
             
             if (appState.user) {
-                desktopContainer.innerHTML = `
-                    <button onclick="navigate('track-status')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>
-                    <button onclick="handleLogout()" class="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/20 transition ml-2">Logout</button>
-                `;
-                mobileContainer.innerHTML = `
-                    <button onclick="navigate('track-status'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium mb-2">My Websites</button>
-                    <button onclick="handleLogout(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 font-medium">Logout</button>
-                `;
+                if (appState.user.role === 'SUPER_ADMIN') {
+                    desktopContainer.innerHTML = `
+                        <button onclick="navigate('admin-dashboard')" class="px-4 py-2 rounded-xl bg-purple-600/20 border border-purple-500/30 text-purple-300 text-sm font-medium hover:bg-purple-600/30 transition">Admin Dashboard</button>
+                        <button onclick="handleLogout()" class="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/20 transition ml-2">Logout</button>
+                    `;
+                    mobileContainer.innerHTML = `
+                        <button onclick="navigate('admin-dashboard'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-purple-600/20 border border-purple-500/30 text-purple-300 font-medium mb-2">Admin Dashboard</button>
+                        <button onclick="handleLogout(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 font-medium">Logout</button>
+                    `;
+                } else {
+                    desktopContainer.innerHTML = `
+                        <button onclick="navigate('track-status')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>
+                        <button onclick="handleLogout()" class="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/20 transition ml-2">Logout</button>
+                    `;
+                    mobileContainer.innerHTML = `
+                        <button onclick="navigate('track-status'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium mb-2">My Websites</button>
+                        <button onclick="handleLogout(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 font-medium">Logout</button>
+                    `;
+                }
             } else {
                 desktopContainer.innerHTML = `<button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800 active:scale-95">Sign In</button>`;
                 mobileContainer.innerHTML = `<button onclick="openLoginModal(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium">Sign In</button>`;
@@ -390,7 +415,170 @@
             else if (appState.currentView === 'how-it-works') { main.innerHTML = renderHowItWorksView(); setTimeout(initScrollReveals, 100); }
             else if (appState.currentView === 'customer-care') { main.innerHTML = renderCustomerCareView(); setTimeout(initScrollReveals, 100); }
             else if (appState.currentView === 'track-status') renderTrackStatusView(main);
+            else if (appState.currentView === 'admin-login') { main.innerHTML = renderAdminLoginView(); }
+            else if (appState.currentView === 'admin-dashboard') renderAdminDashboardView(main);
             else { navigate('home'); }
+        }
+
+        function renderAdminLoginView() {
+            return `
+                <div class="py-24 max-w-md mx-auto px-6">
+                    <div class="glass-panel rounded-3xl p-8 shadow-2xl border border-zinc-800">
+                        <div class="text-center mb-8">
+                            <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">RESTRICTED ACCESS</span>
+                            <h1 class="text-2xl font-bold text-white mt-4 tracking-tight">Super Admin Login</h1>
+                            <p class="text-sm text-zinc-400 mt-2">Enter your administrator credentials to continue.</p>
+                        </div>
+                        <form onsubmit="handleAdminLogin(event)" class="space-y-5">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Email Address</label>
+                                <input type="email" id="admin-email" required class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-brand-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Password</label>
+                                <input type="password" id="admin-password" required class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-brand-500 transition">
+                            </div>
+                            <button type="submit" class="w-full py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg active:scale-95">
+                                Sign In as Admin
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function handleAdminLogin(event) {
+            event.preventDefault();
+            const email = document.getElementById('admin-email').value.trim();
+            const password = document.getElementById('admin-password').value;
+
+            try {
+                await api.req('/auth/admin-login', 'POST', { email, password });
+                const user = await api.req('/auth/me');
+                appState.user = user;
+                if (user && user.role === 'SUPER_ADMIN') {
+                    navigate('admin-dashboard');
+                } else {
+                    alert('You are not authorized to access the Super Admin Dashboard.');
+                }
+            } catch (e) {
+                alert('Invalid admin credentials. Please try again.');
+            }
+        }
+
+        async function renderAdminDashboardView(container) {
+            container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading admin dashboard...</p></div>`;
+
+            try {
+                const user = await api.req('/auth/me');
+                if (!user || user.role !== 'SUPER_ADMIN') {
+                    navigate('admin-login');
+                    return;
+                }
+
+                const projects = await api.req('/admin/projects');
+
+                let totalRequests = projects.length;
+                let inDev = projects.filter(p => p.status === 'IN DEVELOPMENT' || !p.status || p.status === 'Pending').length;
+                let completed = projects.filter(p => p.status === 'Completed').length;
+
+                let html = `
+                    <div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+                            <div>
+                                <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">SUPER ADMIN PORTAL</span>
+                                <h1 class="text-3xl sm:text-4xl font-extrabold text-white mt-3 tracking-tight">Super Admin Dashboard</h1>
+                            </div>
+                            <button onclick="handleLogout()" class="px-5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/20 transition">Logout</button>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
+                            <div class="glass-panel p-6 rounded-3xl border border-zinc-800">
+                                <p class="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Total Requests</p>
+                                <p class="text-3xl font-extrabold text-white">${totalRequests}</p>
+                            </div>
+                            <div class="glass-panel p-6 rounded-3xl border border-zinc-800">
+                                <p class="text-xs font-bold text-brand-400 uppercase tracking-wider mb-1">In Development</p>
+                                <p class="text-3xl font-extrabold text-white">${inDev}</p>
+                            </div>
+                            <div class="glass-panel p-6 rounded-3xl border border-zinc-800">
+                                <p class="text-xs font-bold text-green-400 uppercase tracking-wider mb-1">Completed</p>
+                                <p class="text-3xl font-extrabold text-white">${completed}</p>
+                            </div>
+                        </div>
+
+                        <div class="glass-panel rounded-3xl border border-zinc-800 overflow-hidden">
+                            <div class="p-6 border-b border-zinc-800">
+                                <h2 class="text-lg font-bold text-white">All Website Requests</h2>
+                            </div>
+                `;
+
+                if (!projects || projects.length === 0) {
+                    html += `<div class="p-12 text-center text-zinc-400">No website requests yet.</div>`;
+                } else {
+                    html += `
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse min-w-[900px]">
+                                <thead>
+                                    <tr class="border-b border-zinc-800 text-xs text-zinc-500 uppercase tracking-wider bg-zinc-900/50">
+                                        <th class="py-4 px-6">Request ID</th>
+                                        <th class="py-4 px-6">Customer</th>
+                                        <th class="py-4 px-6">Website Name</th>
+                                        <th class="py-4 px-6">Status</th>
+                                        <th class="py-4 px-6">Payment</th>
+                                        <th class="py-4 px-6">Created</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-zinc-800/60 text-sm text-zinc-300">
+                    `;
+
+                    projects.forEach(p => {
+                        const safeId = escapeHTML(p.id || p._id);
+                        const safeCustomerName = escapeHTML(p.customer_name || p.name || 'N/A');
+                        const safeCustomerEmail = escapeHTML(p.customer_email || p.email || 'N/A');
+                        const safeWebsiteName = escapeHTML(p.website_name || 'Project Request');
+                        const safeStatus = escapeHTML(p.status || 'IN DEVELOPMENT');
+                        const safePayment = escapeHTML(p.payment_status || 'Pending');
+                        const safeDate = new Date(p.created_at || Date.now()).toLocaleDateString();
+
+                        const statusColor = safeStatus === 'Completed' ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
+                        const paymentColor = safePayment === 'Paid' ? 'text-green-400' : 'text-yellow-400';
+
+                        html += `
+                            <tr class="hover:bg-zinc-900/30 transition">
+                                <td class="py-4 px-6 font-mono text-xs text-zinc-400">${safeId}</td>
+                                <td class="py-4 px-6">
+                                    <div class="font-bold text-white">${safeCustomerName}</div>
+                                    <div class="text-xs text-zinc-500">${safeCustomerEmail}</div>
+                                </td>
+                                <td class="py-4 px-6 font-semibold text-white">${safeWebsiteName}</td>
+                                <td class="py-4 px-6"><span class="px-3 py-1 rounded-full text-xs font-bold border ${statusColor}">${safeStatus}</span></td>
+                                <td class="py-4 px-6 font-medium ${paymentColor}">${safePayment}</td>
+                                <td class="py-4 px-6 text-zinc-400 text-xs">${safeDate}</td>
+                            </tr>
+                        `;
+                    });
+
+                    html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+
+                html += `
+                        </div>
+                    </div>
+                `;
+
+                container.innerHTML = html;
+            } catch (e) {
+                if (e.message.includes('403') || e.message.includes('Unauthorized')) {
+                    container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-2">Access Denied</h2><p class="text-zinc-400 mb-6">You are not authorized to access the Super Admin Dashboard.</p><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Return Home</button></div>`;
+                } else {
+                    container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-2">Unable to load website requests</h2><p class="text-zinc-400">${escapeHTML(e.message)}</p></div>`;
+                }
+            }
         }
 
         function renderHomeView() {
@@ -1031,7 +1219,17 @@
             }
         }
 
-        window.onload = () => {
+        window.onload = async () => {
+            try {
+                const user = await api.req('/auth/me');
+                appState.user = user;
+                if (user && user.role === 'SUPER_ADMIN') {
+                    navigate('admin-dashboard');
+                    return;
+                }
+            } catch (e) {
+                appState.user = null;
+            }
             updateNavbarAuth();
             navigate('home');
         };
