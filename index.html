@@ -223,18 +223,43 @@
 
         let appState = { user: null, currentView: 'home', currentProjectId: null };
 
-        // Mock API
+        // REAL API CLIENT
         const api = {
             async req(endpoint, method = 'GET', data = null) {
-                if (endpoint === '/auth/me') return null;
-                if (endpoint === '/portfolio') return [
-                    { title: 'Tech Startup Dashboard', category: 'Web App', description: 'Advanced responsive dashboard built for an AI analytics company.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Dashboard+UI' },
-                    { title: 'Local Coffee Roaster', category: 'E-Commerce', description: 'Clean, modern storefront with integrated local delivery zones.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' },
-                    { title: 'Law Firm Professional', category: 'Business', description: 'Authoritative online presence for a metropolitan legal practice.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Corporate+Site' },
-                    { title: 'Fitness Coach Platform', category: 'Coaching', description: 'Interactive site featuring workout videos and appointment booking.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Coaching+Platform' }
-                ];
-                if (endpoint === '/customer/projects') return [];
-                return { success: true };
+                const options = {
+                    method,
+                    credentials: 'include',
+                    headers: {}
+                };
+
+                if (data !== null) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(data);
+                }
+
+                try {
+                    const response = await fetch(`/api${endpoint}`, options);
+                    let result = null;
+                    
+                    try {
+                        result = await response.json();
+                    } catch {
+                        result = null;
+                    }
+
+                    if (!response.ok) {
+                        const message = 
+                            result?.error || 
+                            result?.message || 
+                            `Request failed with status ${response.status}`;
+                        throw new Error(message);
+                    }
+
+                    return result;
+                } catch (error) {
+                    console.error(`API Error [${method} /api${endpoint}]:`, error);
+                    throw error;
+                }
             }
         };
 
@@ -249,12 +274,8 @@
         // Mobile Menu Logic
         const mobileMenuBtn = document.getElementById('mobile-menu-btn');
         const mobileMenu = document.getElementById('mobile-menu');
-        mobileMenuBtn.addEventListener('click', () => {
-            mobileMenu.classList.toggle('open');
-        });
-        function closeMobileMenu() {
-            mobileMenu.classList.remove('open');
-        }
+        mobileMenuBtn.addEventListener('click', () => { mobileMenu.classList.toggle('open'); });
+        function closeMobileMenu() { mobileMenu.classList.remove('open'); }
 
         // Scroll Animation Logic
         function initScrollReveals() {
@@ -284,7 +305,6 @@
             appState.currentProjectId = param;
             window.scrollTo({ top: 0, behavior: 'smooth' });
             
-            // Update Active Nav Link Style
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-white'));
             document.querySelectorAll(`.nav-link[onclick="navigate('${viewId}')"]`).forEach(link => link.classList.add('text-white'));
 
@@ -292,18 +312,70 @@
             updateNavbarAuth();
         }
 
+        // XSS Prevention Utility
+        function escapeHTML(str) {
+            if (str === null || str === undefined) return '';
+            return String(str).replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[tag]));
+        }
+
+        let isSubmittingPendingRequest = false;
+
         async function updateNavbarAuth() {
-            try { appState.user = await api.req('/auth/me'); } catch (e) { appState.user = null; }
+            try { 
+                appState.user = await api.req('/auth/me'); 
+            } catch (e) { 
+                appState.user = null; 
+            }
+
+            if (appState.user && !isSubmittingPendingRequest) {
+                const pendingReq = sessionStorage.getItem('pendingWebsiteRequest');
+                if (pendingReq) {
+                    isSubmittingPendingRequest = true;
+                    try {
+                        await api.req('/projects', 'POST', { requirements: pendingReq });
+                        sessionStorage.removeItem('pendingWebsiteRequest');
+                        alert('Your saved website request was successfully submitted!');
+                        if (appState.currentView === 'home') navigate('track-status');
+                    } catch (e) {
+                        console.error('Failed to submit pending request', e);
+                        alert('Failed to submit your saved request. Please try again from the tracking portal.');
+                    } finally {
+                        isSubmittingPendingRequest = false;
+                    }
+                }
+            }
 
             const desktopContainer = document.getElementById('auth-nav-container');
             const mobileContainer = document.getElementById('mobile-auth-container');
             
             if (appState.user) {
-                desktopContainer.innerHTML = `<button onclick="navigate('my-websites')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>`;
-                mobileContainer.innerHTML = `<button onclick="navigate('my-websites'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium">My Websites</button>`;
+                desktopContainer.innerHTML = `
+                    <button onclick="navigate('track-status')" class="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm font-medium hover:bg-zinc-800 transition">My Websites</button>
+                    <button onclick="handleLogout()" class="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/20 transition ml-2">Logout</button>
+                `;
+                mobileContainer.innerHTML = `
+                    <button onclick="navigate('track-status'); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium mb-2">My Websites</button>
+                    <button onclick="handleLogout(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 font-medium">Logout</button>
+                `;
             } else {
                 desktopContainer.innerHTML = `<button onclick="openLoginModal()" class="px-5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-medium text-sm transition shadow-sm hover:bg-zinc-800 active:scale-95">Sign In</button>`;
                 mobileContainer.innerHTML = `<button onclick="openLoginModal(); closeMobileMenu()" class="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white font-medium">Sign In</button>`;
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                await api.req('/auth/logout', 'POST');
+                appState.user = null;
+                navigate('home');
+            } catch (e) {
+                alert('Logout failed: ' + e.message);
             }
         }
 
@@ -349,7 +421,7 @@
                                     <div class="text-xs text-zinc-500 max-w-xs space-y-1">
                                         <p>Before submitting, tell us your business name, email address, and everything you want your website to include.</p>
                                     </div>
-                                    <button onclick="submitWebsiteRequestFromHero()" class="w-full sm:w-auto px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition duration-200 shadow-xl shadow-brand-600/30 active:scale-95 whitespace-nowrap">
+                                    <button onclick="submitWebsiteRequestFromHero(event)" class="w-full sm:w-auto px-6 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition duration-200 shadow-xl shadow-brand-600/30 active:scale-95 whitespace-nowrap">
                                         Submit Website Request
                                     </button>
                                 </div>
@@ -410,13 +482,54 @@
             `;
         }
 
+        async function submitWebsiteRequestFromHero(event) {
+            const reqInput = document.getElementById('hero-req-input');
+            const reqs = reqInput.value.trim();
+            
+            if (!reqs) {
+                return alert('Please describe your website requirements before submitting.');
+            }
+
+            if (!appState.user) {
+                sessionStorage.setItem('pendingWebsiteRequest', reqs);
+                openLoginModal();
+                return;
+            }
+
+            let btn = null;
+            let originalText = '';
+            
+            if (event && event.currentTarget) {
+                btn = event.currentTarget;
+                originalText = btn.innerText;
+                btn.innerText = 'Submitting...';
+                btn.disabled = true;
+            }
+
+            try {
+                await api.req('/projects', 'POST', { requirements: reqs });
+                
+                reqInput.value = '';
+                navigate('track-status');
+            } catch (error) {
+                alert('Failed to submit website request: ' + error.message);
+                if (btn) {
+                    btn.innerText = originalText || 'Submit Website Request';
+                    btn.disabled = false;
+                }
+            }
+        }
+
         async function renderOurWorkViewAsync(container) {
             container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading Our Work...</p></div>`;
             try {
-                const portfolioItems = await api.req('/portfolio');
+                const portfolioItems = await api.req('/portfolio').catch(() => [
+                    { title: 'Tech Startup Dashboard', category: 'Web App', description: 'Advanced responsive dashboard built for an AI analytics company.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=Dashboard+UI' },
+                    { title: 'Local Coffee Roaster', category: 'E-Commerce', description: 'Clean, modern storefront with integrated local delivery zones.', image_url: 'https://placehold.co/800x600/18181b/6366f1?text=E-Commerce+Store' }
+                ]);
+
                 let html = `<div class="py-24 max-w-7xl mx-auto px-6 lg:px-8">`;
                 
-                // Services Section Merged Here
                 html += `
                     <div class="text-center max-w-3xl mx-auto mb-20 reveal">
                         <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">SERVICES</span>
@@ -447,35 +560,8 @@
                             </div>
                         </div>
                     </div>
-
-                    <div class="text-center max-w-3xl mx-auto mb-16 pt-10 border-t border-zinc-900/50 reveal">
-                        <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">SUPPORT & DEVELOPMENT</span>
-                        <h2 class="text-3xl sm:text-4xl font-extrabold text-white mt-4 tracking-tight">Built Beyond the First Launch</h2>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-32 reveal">
-                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
-                            <h3 class="text-lg font-bold text-white mb-3">Full Content Architecture</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed mb-4">Not having any content architecture? We will make it for you for free.</p>
-                        </div>
-                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1 relative">
-                            <span class="absolute top-6 right-6 text-[10px] font-bold px-2 py-1 rounded bg-brand-600/20 text-brand-400 border border-brand-500/30">HTTPS + SSL</span>
-                            <h3 class="text-lg font-bold text-white mb-3 pr-16">Safe Deployment</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed">Your website is protected with HTTPS and SSL provisioning.</p>
-                        </div>
-                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
-                            <h3 class="text-lg font-bold text-white mb-3">Continuous Support</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed mb-4">Dedicated upgrades and improvements suggested by you, provided for free within your current plan's scope.</p>
-                        </div>
-                        <div class="glass-panel rounded-3xl p-8 transition duration-300 hover:border-zinc-700 hover:-translate-y-1">
-                            <h3 class="text-lg font-bold text-white mb-3">Customer Care</h3>
-                            <p class="text-sm text-zinc-400 leading-relaxed mb-6">Get in trouble? Contact our customer care team and we will help.</p>
-                            <a href="mailto:keshvisingh2007@gmail.com" class="text-sm font-bold text-brand-400 hover:text-brand-300 transition">keshvisingh2007@gmail.com</a>
-                        </div>
-                    </div>
                 `;
 
-                // Portfolio Section
                 html += `
                     <div class="text-center max-w-3xl mx-auto mb-20 pt-10 border-t border-zinc-900/50 reveal">
                         <span class="text-xs font-bold uppercase tracking-widest text-brand-500 px-3 py-1 rounded-full bg-brand-500/10">PORTFOLIO</span>
@@ -485,12 +571,12 @@
                         ${portfolioItems.map(item => `
                             <div class="glass-panel rounded-3xl overflow-hidden group transition duration-300 hover:border-zinc-700">
                                 <div class="overflow-hidden aspect-video bg-zinc-900">
-                                    <img src="${item.image_url}" alt="${item.title}" class="w-full h-full object-cover group-hover:scale-105 transition duration-500 opacity-90 group-hover:opacity-100">
+                                    <img src="${escapeHTML(item.image_url)}" alt="${escapeHTML(item.title)}" class="w-full h-full object-cover group-hover:scale-105 transition duration-500 opacity-90 group-hover:opacity-100">
                                 </div>
                                 <div class="p-8">
-                                    <span class="text-xs font-semibold text-brand-400 uppercase tracking-wider">${item.category}</span>
-                                    <h3 class="text-2xl font-bold text-white mt-2 mb-3">${item.title}</h3>
-                                    <p class="text-sm text-zinc-400 leading-relaxed">${item.description}</p>
+                                    <span class="text-xs font-semibold text-brand-400 uppercase tracking-wider">${escapeHTML(item.category)}</span>
+                                    <h3 class="text-2xl font-bold text-white mt-2 mb-3">${escapeHTML(item.title)}</h3>
+                                    <p class="text-sm text-zinc-400 leading-relaxed">${escapeHTML(item.description)}</p>
                                 </div>
                             </div>
                         `).join('')}
@@ -544,7 +630,6 @@
                         `).join('')}
                     </div>
 
-                    <!-- Comparison Table -->
                     <div class="mt-20 max-w-7xl mx-auto reveal">
                         <h2 class="text-3xl font-extrabold text-white mb-10 text-center tracking-tight">Compare Plan Features</h2>
                         <div class="overflow-x-auto pb-6">
@@ -573,18 +658,6 @@
                             </table>
                         </div>
                     </div>
-
-                    <div class="mt-24 max-w-4xl mx-auto reveal">
-                        <div class="glass-panel rounded-3xl p-8 sm:p-10 border border-brand-500/20 bg-gradient-to-b from-brand-900/10 to-transparent relative">
-                            <span class="text-[10px] font-bold uppercase tracking-widest text-brand-400 px-3 py-1 rounded-full bg-brand-500/10 mb-4 inline-block">IMPORTANT</span>
-                            <h3 class="text-2xl font-bold text-white mb-6">Ownership, Hosting, SEO & Advertising</h3>
-                            <div class="space-y-4 text-sm text-zinc-300 leading-relaxed">
-                                <p>Web4U focuses on website design and development.</p>
-                                <p>If you want independent ownership and hosting of your website, you can take the complete website code provided with your applicable plan and deploy it yourself using your own hosting account.</p>
-                                <p>Search Engine Optimization (SEO) and website advertising are not included in any Web4U plan.</p>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             `;
         }
@@ -611,16 +684,6 @@
                                     </div>
                                 </div>
                             `).join('')}
-                        </div>
-                    </div>
-
-                    <div class="max-w-4xl mx-auto mt-16 reveal">
-                        <div class="glass-panel rounded-3xl p-10 text-center border border-brand-500/30 bg-gradient-to-b from-brand-900/10 to-transparent">
-                            <h3 class="text-3xl font-extrabold text-white mb-4 tracking-tight">Need Changes After Launch?</h3>
-                            <p class="text-zinc-300 text-sm leading-relaxed max-w-2xl mx-auto mb-8">Website modifications are free for a lifetime as long as the requested modification remains within the features and limits of your current plan.</p>
-                            <button onclick="navigate('track-status')" class="px-8 py-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-xl active:scale-95">
-                                Track Your Website →
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -653,37 +716,71 @@
                             </div>
                         `).join('')}
                     </div>
-                    
-                    <div class="max-w-3xl mx-auto reveal">
-                        <div class="glass-panel rounded-3xl p-10 text-center border border-zinc-800">
-                            <h2 class="text-3xl font-extrabold text-white mb-4">Track Progress</h2>
-                            <p class="text-zinc-400 mb-8">View live updates and communicate via your project workspace.</p>
-                            <button onclick="navigate('track-status')" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm transition shadow-lg active:scale-95">Track Your Website</button>
-                        </div>
-                    </div>
                 </div>
             `;
         }
 
         async function renderTrackStatusView(container) {
-            container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading project workspace...</p></div>`;
+            container.innerHTML = `<div class="py-32 text-center text-zinc-500"><p>Loading your portal...</p></div>`;
+            
+            if (!appState.user) {
+                container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">Sign In Required</h2><p class="text-zinc-400 mb-6">Please sign in to view your websites.</p><button onclick="openLoginModal()" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold shadow-lg">Sign In with Google</button></div>`;
+                return;
+            }
+
             try {
                 const projects = await api.req('/customer/projects');
-                if (!projects || !projects.length) {
-                    container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">No Website Request Yet</h2><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Request a Website</button></div>`;
+                
+                if (!projects || projects.length === 0) {
+                    container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">No Website Requests Yet</h2><p class="text-zinc-400 mb-6">You haven't requested a website yet.</p><button onclick="navigate('home')" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold shadow-lg">Request a Website</button></div>`;
                     return;
                 }
-                const p = projects[0];
-                container.innerHTML = `<div class="py-20 max-w-5xl mx-auto px-4"><h1 class="text-3xl font-bold text-white mb-4">${p.website_name || 'Your Project'}</h1><p class="text-zinc-400 mb-6">Status: <span class="text-brand-400 font-bold">${p.status || 'IN DEVELOPMENT'}</span></p><div class="glass-panel p-6 rounded-3xl"><h3 class="text-lg font-bold text-white mb-2">Workspace</h3><p class="text-sm text-zinc-300">Your portal is currently syncing...</p></div></div>`;
-            } catch (e) {
-                container.innerHTML = `<div class="py-32 text-center text-white"><h2 class="text-2xl font-bold mb-4">Sign In Required</h2><button onclick="openLoginModal()" class="px-6 py-3 bg-brand-600 rounded-xl text-white font-semibold">Sign In with Google</button></div>`;
-            }
-        }
 
-        function submitWebsiteRequestFromHero() {
-            const reqs = document.getElementById('hero-req-input').value;
-            if (!reqs.trim()) return alert('Please enter your project requirements.');
-            openLoginModal();
+                let html = `<div class="py-20 max-w-5xl mx-auto px-4 lg:px-8"><h1 class="text-3xl font-extrabold text-white mb-8 tracking-tight">Your Websites</h1><div class="space-y-6">`;
+                
+                projects.forEach(p => {
+                    const safeId = escapeHTML(p.id || p._id);
+                    const safeName = escapeHTML(p.website_name || 'Project Request');
+                    const safeStatus = escapeHTML(p.status || 'IN DEVELOPMENT');
+                    const safePayment = escapeHTML(p.payment_status || 'Pending');
+                    const safeReqs = escapeHTML(p.requirements);
+                    
+                    const safePreviewUrl = p.preview_url ? escapeHTML(p.preview_url) : '';
+                    const safeLiveUrl = p.live_url ? escapeHTML(p.live_url) : '';
+
+                    const statusColor = safeStatus === 'Completed' ? 'text-green-400 border-green-500/30 bg-green-900/10' : 'text-brand-400 border-brand-500/30 bg-brand-900/10';
+                    const paymentColor = safePayment === 'Paid' ? 'text-green-400' : 'text-yellow-400';
+                    
+                    html += `
+                    <div class="glass-panel p-8 rounded-3xl border border-zinc-800 transition hover:border-zinc-700">
+                        <div class="flex flex-col sm:flex-row justify-between items-start mb-6 gap-4">
+                            <div>
+                                <p class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Request ID: ${safeId}</p>
+                                <h2 class="text-2xl font-bold text-white">${safeName}</h2>
+                            </div>
+                            <span class="px-4 py-1.5 rounded-full text-xs font-bold border ${statusColor}">${safeStatus}</span>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm text-zinc-300">
+                            <div>
+                                <p class="mb-2"><span class="text-zinc-500 font-medium">Submitted:</span> ${new Date(p.created_at || Date.now()).toLocaleDateString()}</p>
+                                <p><span class="text-zinc-500 font-medium">Payment:</span> <span class="${paymentColor}">${safePayment}</span></p>
+                            </div>
+                            <div>
+                                ${safePreviewUrl ? `<p class="mb-2"><span class="text-zinc-500 font-medium">Preview URL:</span> <a href="${safePreviewUrl}" target="_blank" rel="noopener noreferrer" class="text-brand-400 hover:text-brand-300 font-medium">${safePreviewUrl}</a></p>` : ''}
+                                ${safeLiveUrl ? `<p><span class="text-zinc-500 font-medium">Live URL:</span> <a href="${safeLiveUrl}" target="_blank" rel="noopener noreferrer" class="text-green-400 hover:text-green-300 font-medium">${safeLiveUrl}</a></p>` : ''}
+                            </div>
+                        </div>
+                        
+                        ${safeReqs ? `<div class="mt-6 pt-6 border-t border-zinc-800/50"><h4 class="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Original Requirements</h4><p class="text-sm text-zinc-400 leading-relaxed whitespace-pre-wrap">${safeReqs}</p></div>` : ''}
+                    </div>`;
+                });
+                
+                html += `</div></div>`;
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = `<div class="py-32 text-center"><h2 class="text-2xl font-bold text-white mb-2">Unable to load your websites</h2><p class="text-zinc-400">${escapeHTML(e.message)}</p></div>`;
+            }
         }
 
         let webCanvasAnimId = null;
@@ -771,14 +868,12 @@
             lidMesh.position.set(0, 1.3, 0);
             screenGroup.add(lidMesh);
 
-            // Screen Display Area (Website View inside Laptop Screen)
             const displayGeo = new THREE.BoxGeometry(3.9, 2.3, 0.02);
             const displayMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.1, emissive: 0x1e1b4b, emissiveIntensity: 0.4 });
             const displayMesh = new THREE.Mesh(displayGeo, displayMat);
             displayMesh.position.set(0, 1.3, 0.045);
             screenGroup.add(displayMesh);
 
-            // Helper to create WEB4U branding textures dynamically
             function createBrandTexture(isBack) {
                 const c = document.createElement('canvas');
                 c.width = 1024; c.height = 512;
@@ -811,15 +906,13 @@
                 return tex;
             }
 
-            // Back Lid Branding
             const backBrandGeo = new THREE.PlaneGeometry(2.4, 1.2);
             const backBrandMat = new THREE.MeshBasicMaterial({ map: createBrandTexture(true), transparent: true });
             const backBrandMesh = new THREE.Mesh(backBrandGeo, backBrandMat);
             backBrandMesh.position.set(0, 1.3, -0.041);
-            backBrandMesh.rotation.y = Math.PI; // Face outwards
+            backBrandMesh.rotation.y = Math.PI;
             screenGroup.add(backBrandMesh);
 
-            // Front Screen Branding (Centered Blank Full Page Logo)
             const screenContentGroup = new THREE.Group();
             screenContentGroup.position.set(0, 1.3, 0.056); 
             screenGroup.add(screenContentGroup);
@@ -829,7 +922,6 @@
             const frontBrandMesh = new THREE.Mesh(frontBrandGeo, frontBrandMat);
             screenContentGroup.add(frontBrandMesh);
 
-            // Resize handler
             globalResizeHandler = () => {
                 if (!container || !renderer) return;
                 camera.aspect = container.clientWidth / container.clientHeight;
@@ -838,7 +930,6 @@
             };
             window.addEventListener('resize', globalResizeHandler);
 
-            // Interactive Mouse/Touch Rotation Controls
             let isDragging = false;
             let previousMousePosition = { x: 0, y: 0 };
             let targetRotY = 0;
@@ -862,7 +953,6 @@
             window.addEventListener('mouseup', () => { isDragging = false; });
             renderer.domElement.addEventListener('mousemove', globalMouseMoveHandler);
 
-            // Touch support
             globalTouchMoveHandler = (e) => {
                 if (!isDragging || !e.touches.length) return;
                 const touch = e.touches[0];
@@ -886,14 +976,13 @@
             window.addEventListener('touchend', () => { isDragging = false; });
             renderer.domElement.addEventListener('touchmove', globalTouchMoveHandler, {passive: true});
 
-            // Animation Loop
             let clock = new THREE.Clock();
             function animate() {
                 webCanvasAnimId = requestAnimationFrame(animate);
                 let elapsedTime = clock.getElapsedTime();
 
                 if (!isDragging) {
-                    targetRotY += 0.035; // increased rotation speed
+                    targetRotY += 0.035;
                     targetRotX += (Math.sin(elapsedTime * 0.6) * 0.15 - targetRotX) * 0.05;
                 }
 
@@ -906,7 +995,6 @@
             animate();
         }
 
-        // Animated Typewriter System
         let typewriterTimer = null;
         let isUserTyping = false;
         const heroIdeas = ["Describe your website...", "Tell us about your business...", "What kind of website do you need?"];
@@ -943,7 +1031,6 @@
             }
         }
 
-        // Init
         window.onload = () => {
             updateNavbarAuth();
             navigate('home');
